@@ -1,0 +1,24 @@
+apiVersion: weka.weka.io/v1alpha1
+kind: WekaClient
+metadata:
+  name: weka-client
+  namespace: weka-operator-system
+spec:
+  image: quay.io/weka.io/weka-in-container:4.4.10.183
+  imagePullSecret: weka-quay-io-secret
+  driversDistService: "https://drivers.weka.io"
+  portRange:
+    basePort: 46000
+  nodeSelector:
+    weka.io/supports-clients: "true"
+  joinIpPorts:
+    - "10.0.67.159:14000"
+    - "10.0.67.15:14000"
+    - "10.0.66.95:14000"
+    - "10.0.65.82:14000"
+    - "10.0.64.194:14000"
+    - "10.0.67.69:14000"
+  coresNum: 2
+  hugepages: 3072
+  network:
+    udpMode: false

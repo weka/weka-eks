@@ -1,0 +1,22 @@
+apiVersion: weka.weka.io/v1alpha1
+kind: WekaClient
+metadata:
+  name: weka-client-hyperpod
+  namespace: weka-operator
+spec:
+  image: quay.io/weka.io/weka-in-container:4.4.10.183
+  imagePullSecret: quay-weka-secret
+  driversDistService: "https://drivers.weka.io"
+  portRange:
+    basePort: 46000
+  nodeSelector:
+    sagemaker.amazonaws.com/compute-type: hyperpod
+    weka.io/supports-clients-hyperpod: "true"
+    workload-type: weka-client
+  joinIpPorts:
+    - "10.0.66.37:14000"
+    - "10.0.65.149:14000"
+  coresNum: 2
+  hugepages: 3072
+  network:
+    udpMode: false

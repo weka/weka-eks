@@ -1,0 +1,66 @@
+# -----------------------------------------------------------------------------
+# General
+# -----------------------------------------------------------------------------
+region = "eu-west-1"
+
+tags_map = {"Project": "weka-eks"}
+
+# -----------------------------------------------------------------------------
+# Cluster
+# -----------------------------------------------------------------------------
+cluster_name = "weka-backend"
+cluster_size = 6
+prefix       = "weka"
+
+# -----------------------------------------------------------------------------
+# Instance
+# -----------------------------------------------------------------------------
+instance_type    = "i3en.6xlarge"
+key_pair_name    = "my-key"
+assign_public_ip = false
+
+# -----------------------------------------------------------------------------
+# WEKA Software
+# -----------------------------------------------------------------------------
+weka_version      = "4.4.10.183"
+get_weka_io_token = "YOUR_TOKEN_FROM_GET_WEKA_IO"
+
+# -----------------------------------------------------------------------------
+# Network
+# -----------------------------------------------------------------------------
+subnet_ids         = ["subnet-xxxxxxxxx"]
+sg_ids             = []  # Optional: existing security groups
+create_nat_gateway = false  # Set true if subnets don't have NAT
+
+# -----------------------------------------------------------------------------
+# ALB
+# -----------------------------------------------------------------------------
+create_alb               = true
+alb_additional_subnet_id = "subnet-yyyyyyyyy"  # Must be different AZ from subnet_ids
+
+# -----------------------------------------------------------------------------
+# WEKA Options
+# -----------------------------------------------------------------------------
+# set_dedicated_fe_container = false
+# data_services_number       = 0
+
+# -----------------------------------------------------------------------------
+# Tiering (optional)
+# -----------------------------------------------------------------------------
+# tiering_enable_obs_integration = true
+# tiering_obs_name               = "my-tiering-bucket"
+# tiering_enable_ssd_percent     = 20
+
+# -----------------------------------------------------------------------------
+# Secrets Manager
+# -----------------------------------------------------------------------------
+secretmanager_use_vpc_endpoint    = true
+secretmanager_create_vpc_endpoint = false  # Set true if endpoint doesn't exist
+
+# -----------------------------------------------------------------------------
+# IAM (optional: use existing roles instead of creating new ones)
+# -----------------------------------------------------------------------------
+# instance_iam_profile_arn = "arn:aws:iam::ACCOUNT:instance-profile/weka-instance-profile"
+# lambda_iam_role_arn      = "arn:aws:iam::ACCOUNT:role/weka-lambda-role"
+# sfn_iam_role_arn         = "arn:aws:iam::ACCOUNT:role/weka-sfn-role"
+# event_iam_role_arn       = "arn:aws:iam::ACCOUNT:role/weka-events-role"

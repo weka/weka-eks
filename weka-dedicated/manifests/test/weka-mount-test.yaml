@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: weka-pvc-test
+  namespace: weka-test
+spec:
+  nodeSelector:
+    weka.io/supports-clients: "true"
+  containers:
+  - name: test-container
+    image: busybox
+    volumeMounts:
+    - name: weka-volume
+      mountPath: "/data"
+    command: ["sh", "-c", "echo 'Hello from WEKA!' > /data/hello.txt && ls -la /data && sleep 3600"]
+  volumes:
+  - name: weka-volume
+    persistentVolumeClaim:
+      claimName: pvc-wekafs-dir

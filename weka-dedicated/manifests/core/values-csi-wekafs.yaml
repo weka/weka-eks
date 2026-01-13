@@ -1,0 +1,8 @@
+node:
+  nodeSelector:
+    weka.io/supports-clients: "true"
+
+pluginConfig:
+  allowInsecureHttps: true
+#
+#allowInsecureHttps: true
