@@ -197,7 +197,7 @@ The WEKA deployment uses Lambda functions and Step Functions. Check CloudWatch L
 | Name | Version |
 |------|---------|
 | terraform | >= 1.5 |
-| aws | ~> 5.0 |
+| aws | ~> 6.0 |
 | weka/weka/aws | 1.0.23 |
 
 ## References
