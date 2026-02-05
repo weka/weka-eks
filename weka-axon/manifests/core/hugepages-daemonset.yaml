@@ -1,0 +1,116 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hugepages-config
+  namespace: kube-system
+data:
+  HUGEPAGES_COUNT: "5376"
+  configure-hugepages.sh: |
+    #!/bin/sh
+    set -eu
+
+    : "${HUGEPAGES_COUNT:?ERROR: HUGEPAGES_COUNT env var not set}"
+
+    DESIRED="$HUGEPAGES_COUNT"
+    SYSFS="/host/sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages"
+    UNIT="/host/etc/systemd/system/hugepages.service"
+
+    CURRENT="$(cat "$SYSFS" 2>/dev/null || true)"
+
+    if [ "$CURRENT" = "$DESIRED" ]; then
+      echo "Hugepages already configured ($CURRENT). No changes needed."
+      exit 0
+    fi
+
+    echo "Configuring hugepages: current=${CURRENT:-unknown} desired=$DESIRED"
+    echo "$DESIRED" > "$SYSFS"
+
+    # Persist across reboot using a systemd oneshot unit on the host
+    cat > "$UNIT" <<SYSTEMD_EOF
+    [Unit]
+    Description=Configure Hugepages for WEKA
+    Before=kubelet.service
+
+    [Service]
+    Type=oneshot
+    ExecStart=/bin/sh -c 'echo "$DESIRED" > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages'
+    RemainAfterExit=yes
+
+    [Install]
+    WantedBy=multi-user.target
+    SYSTEMD_EOF
+
+    echo "Enabling hugepages systemd unit..."
+    nsenter -t 1 -m -u -n -i systemctl daemon-reload
+    nsenter -t 1 -m -u -n -i systemctl enable hugepages.service
+    nsenter -t 1 -m -u -n -i systemctl start hugepages.service
+
+    echo "Restarting kubelet (only because hugepages changed)..."
+    nsenter -t 1 -m -u -n -i systemctl restart kubelet
+
+    echo "Done. Hugepages now: $(cat "$SYSFS")"
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: hugepages-configurator
+  namespace: kube-system
+spec:
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 10%
+  selector:
+    matchLabels:
+      app: hugepages-configurator
+  template:
+    metadata:
+      labels:
+        app: hugepages-configurator
+    spec:
+      nodeSelector:
+        weka.io/supports-backends: "true"
+      hostPID: true
+      hostIPC: true
+
+      initContainers:
+      - name: configure-hugepages
+        image: busybox:latest
+        command: ["sh", "/scripts/configure-hugepages.sh"]
+        env:
+        - name: HUGEPAGES_COUNT
+          valueFrom:
+            configMapKeyRef:
+              name: hugepages-config
+              key: HUGEPAGES_COUNT
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: sys
+          mountPath: /host/sys
+        - name: etc
+          mountPath: /host/etc
+        - name: scripts
+          mountPath: /scripts
+
+      containers:
+      - name: pause
+        image: registry.k8s.io/pause:3.9
+
+      volumes:
+      - name: sys
+        hostPath:
+          path: /sys
+          type: Directory
+      - name: etc
+        hostPath:
+          path: /etc
+          type: Directory
+      - name: scripts
+        configMap:
+          name: hugepages-config
+          defaultMode: 0755
+
+      tolerations:
+      - operator: Exists
+

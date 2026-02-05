@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: weka-axon-app
+  namespace: weka-axon-test
+spec:
+  nodeSelector:
+    weka.io/supports-clients: "true"
+  tolerations:
+    - key: "weka.io/axon"
+      operator: "Equal"
+      value: "true"
+      effect: "NoSchedule"
+  containers:
+    - name: test
+      image: busybox:1.36
+      command:
+        - sh
+        - -lc
+        - |
+          echo "hello from WEKA CSI" > /data/hello.txt
+          ls -la /data
+          cat /data/hello.txt
+          sleep 3600
+      volumeMounts:
+        - name: weka-vol
+          mountPath: /data
+  volumes:
+    - name: weka-vol
+      persistentVolumeClaim:
+        claimName: pvc-wekafs-dir
+

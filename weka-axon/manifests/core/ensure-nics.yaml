@@ -1,0 +1,15 @@
+apiVersion: weka.weka.io/v1alpha1
+kind: WekaPolicy
+metadata:
+  name: ensure-nics-policy
+  namespace: weka-operator-system
+spec:
+  type: "ensure-nics"
+  image: "quay.io/weka.io/weka-in-container:4.4.10.200"
+  imagePullSecret: "weka-quay-io-secret"
+  payload:
+    ensureNICsPayload:
+      type: aws
+      nodeSelector:
+        weka.io/supports-backends: "true"
+      dataNICsNumber: 7

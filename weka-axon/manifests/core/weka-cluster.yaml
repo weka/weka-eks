@@ -1,0 +1,27 @@
+apiVersion: weka.weka.io/v1alpha1
+kind: WekaCluster
+metadata:
+  name: weka-axon-eks-cluster
+  namespace: weka-operator-system
+spec:
+  template: dynamic
+  dynamicTemplate:
+    computeContainers: 6
+    computeCores: 2
+    driveContainers: 6
+    driveCores: 2
+  driversDistService: https://drivers.weka.io
+  image: quay.io/weka.io/weka-in-container:4.4.10.200
+  imagePullSecret: "weka-quay-io-secret"
+  gracefulDestroyDuration: "0"
+  nodeSelector:
+    weka.io/supports-backends: "true"
+  rawTolerations:
+    - key: "weka.io/axon"
+      operator: "Equal"
+      value: "true"
+      effect: "NoSchedule"
+  ports:
+    basePort: 15000
+  network:
+    udpMode: false

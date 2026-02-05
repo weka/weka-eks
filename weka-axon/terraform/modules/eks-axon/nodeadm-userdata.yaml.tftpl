@@ -1,0 +1,31 @@
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="==MYBOUNDARY=="
+
+--==MYBOUNDARY==
+Content-Type: application/node.eks.aws
+Mime-Version: 1.0
+
+---
+apiVersion: node.eks.aws/v1alpha1
+kind: NodeConfig
+spec:
+  cluster:
+    name: ${cluster_name}
+    apiServerEndpoint: ${api_server}
+    certificateAuthority: ${cluster_ca_b64}
+%{ if service_cidr != null }
+    cidr: ${service_cidr}
+%{ endif }
+%{ if dns_cluster_ip != null }
+    clusterDNS:
+      - ${dns_cluster_ip}
+%{ endif }
+%{ if enable_cpu_manager_static }
+  kubelet:
+    config:
+      cpuManagerPolicy: static
+      cpuManagerReconcilePeriod: ${cpu_reconcile}
+%{ endif }
+
+--==MYBOUNDARY==--
+

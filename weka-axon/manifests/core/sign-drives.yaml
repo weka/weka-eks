@@ -1,0 +1,12 @@
+apiVersion: weka.weka.io/v1alpha1
+kind: WekaPolicy
+metadata:
+  name: sign-drives-policy
+  namespace: weka-operator-system
+spec:
+  type: sign-drives
+  payload:
+    signDrivesPayload:
+      type: "aws-all"
+      nodeSelector:
+        weka.io/supports-backends: "true"
