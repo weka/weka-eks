@@ -147,8 +147,8 @@ node_groups = {
     enable_nodeadm_config = true
 
     labels = {
-      "weka.io.supports-backends" = "true"
-      "weka.io.supports-clients"  = "true"
+      "weka.io/supports-backends" = "true"
+      "weka.io/supports-clients"  = "true"
     }
 
     taints = [

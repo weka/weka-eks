@@ -37,3 +37,4 @@ credentials/
 # WEKA manifests with credentials (use .example files as templates)
 weka-dedicated/manifests/core/weka-client.yaml
 weka-dedicated/manifests/core/csi-wekafs-api-secret.yaml
+weka-axon/manifests/*secret*.yaml

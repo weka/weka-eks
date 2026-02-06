@@ -1,93 +1,42 @@
 # WEKA on Amazon EKS
 
-Deploy WEKA distributed storage with Amazon EKS.
+Deploy WEKA distributed storage with Amazon EKS using the WEKA Operator.
 
-## Architecture Overview
-
-<!-- TODO: Add architecture diagram -->
-<!-- ![Architecture](img/architecture.png) -->
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        EKS Cluster                          │
-│  ┌─────────────────┐  ┌─────────────────┐                   │
-│  │   System Nodes  │  │  WEKA Client    │                   │
-│  │                 │  │     Nodes       │                   │
-│  │  - CoreDNS      │  │                 │                   │
-│  │  - Operator     │  │  ┌───────────┐  │                   │
-│  │  - CSI Plugin   │  │  │WEKA Client│  │                   │
-│  │                 │  │  │ Container │──┼───┐               │
-│  └─────────────────┘  │  └───────────┘  │   │               │
-│                       └─────────────────┘   │               │
-└─────────────────────────────────────────────┼───────────────┘
-                                              │ DPDK/UDP
-┌─────────────────────────────────────────────┼───────────────┐
-│                   WEKA Backend Cluster      │               │
-│  ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌─────▼┐ ┌──────┐     │
-│  │  i3en │ │  i3en │ │  i3en │ │  i3en │ │  i3en │ │  i3en │     │
-│  │  node │ │  node │ │  node │ │  node │ │  node │ │  node │     │
-│  └──────┘ └──────┘ └──────┘ └──────┘ └──────┘ └──────┘     │
-│                        NVMe Storage                         │
-└─────────────────────────────────────────────────────────────┘
-```
+<p align="center">
+  <img src="img/weka-eks-architecture.png" alt="WEKA + EKS Architecture" width="700">
+</p>
 
 ## Deployment Models
 
 ### [weka-dedicated](weka-dedicated/)
 
-Separate WEKA storage cluster with dedicated backend instances (i3en). EKS worker nodes run WEKA client containers that connect to the backend over the network. Applications access WEKA storage via the CSI plugin and PersistentVolumeClaims.
+A WEKA storage cluster is created with dedicated backend instances. EKS worker nodes run WEKA client containers that connect to the backend over the network. Applications access WEKA storage via the CSI plugin and PersistentVolumeClaims.
 
-**Best for**: Production workloads, independent scaling of compute and storage.
-
-### [weka-converged](weka-converged/)
+### [weka-axon](weka-axon/)
 
 WEKA backend and client processes run together on the same EKS nodes. Each node contributes local NVMe storage to the distributed filesystem while also running application workloads.
 
-**Best for**: Development/test environments, simplified operations.
-
 ### [hyperpod-dedicated](hyperpod-dedicated/)
 
-Similar to weka-dedicated, but client node instances are provisioned and managed by SageMaker HyperPod. HyperPod handles instance lifecycle and health monitoring, then nodes join the EKS cluster for workload scheduling.
+Similar to weka-dedicated, with a standalone WEKA storage cluster and an EKS cluster for worker nodes and applicaiton pods. However, in this deployment model, client instances are provisioned and managed by SageMaker HyperPod, and then added to the EKS cluster to be used as worker nodes
 
-**Best for**: ML training workloads requiring managed infrastructure with high-performance storage.
+### [hyperpod-axon](hyperpod-axon/)
 
-### [hyperpod-converged](hyperpod-converged/)
+Similar to weka-axon, but Sagemaker Hyperod provisons all the underlying EC2 instances. Those instances are added to an EKS cluster, where thye're used for deploying both the WEKA cluster and worker pods.
 
-Similar to weka-converged, but all underlying instances (both WEKA backends and clients) are provisioned and managed by SageMaker HyperPod.
+## Deployment
 
-**Best for**: Fully managed ML infrastructure with converged storage. *(Experimental)*
+See the README in each deployment model for detailed instructions. Each module is designed to be a standalone deployment; you can create a fully working WEKA + EKS cluster using the Terraform and other code/instructions in each section.
 
-## Quick Start
+### Prerequisites
 
-See the README in each deployment model for detailed instructions.
+* AWS CLI configured
+* Terraform 1.5+
+* kubectl, Helm 3.x
+* WEKA download token from ([get.weka.io](https://get.weka.io))
+* Quay.io credentials for WEKA images
 
-For **weka-dedicated**:
-
-```bash
-cd weka-dedicated
-
-# 1. Deploy infrastructure
-cd terraform/weka-backend && terraform apply
-cd ../eks && terraform apply
-
-# 2. Configure manifests
-cp manifests/core/weka-client.yaml.example manifests/core/weka-client.yaml
-cp manifests/core/csi-wekafs-api-secret.yaml.example manifests/core/csi-wekafs-api-secret.yaml
-# Edit with your values...
-
-# 3. Deploy WEKA operator, clients, and CSI
-./deploy.sh <cluster-name> <quay-username> <quay-password>
-```
-
-## Prerequisites
-
-- AWS CLI configured
-- Terraform 1.5+
-- kubectl, Helm 3.x
-- WEKA download token ([get.weka.io](https://get.weka.io))
-- Quay.io credentials for WEKA images (contact WEKA)
-
-## How It Works
+### How It Works
 
 WEKA integrates with Kubernetes using the standard CSI (Container Storage Interface) pattern:
 
@@ -95,73 +44,44 @@ WEKA integrates with Kubernetes using the standard CSI (Container Storage Interf
 ┌──────────────────────────────────────────────────────────────────────┐
 │                         Kubernetes Cluster                           │
 │                                                                      │
-│  1. WEKA Operator          2. CSI Plugin           3. Your Pods     │
-│  ┌─────────────────┐       ┌─────────────────┐     ┌──────────────┐ │
-│  │ Deploys WEKA    │       │ Provisions PVs  │     │ Mount WEKA   │ │
-│  │ client containers│  ──▶  │ from WEKA       │ ──▶ │ via PVC      │ │
-│  │ on selected nodes│       │ filesystem      │     │              │ │
-│  └─────────────────┘       └─────────────────┘     └──────────────┘ │
+│  1. WEKA Operator          2. CSI Plugin           3. Your Pods      │
+│  ┌─────────────────┐       ┌─────────────────┐     ┌──────────────┐  │
+│  │ Deploys WEKA    │       │ Provisions PVs  │     │ Mount WEKA   │  │
+│  │ client containers│  ──▶ │ from WEKA       │ ──▶ │ via PVC      │  │
+│  │ on selected nodes│      │ filesystem      │     │              │  │
+│  └─────────────────┘       └─────────────────┘     └──────────────┘  │
 │         │                                                            │
 │         ▼                                                            │
 │  ┌─────────────────┐                                                 │
-│  │ WekaClient CRD  │  Runs WEKA client process on nodes with        │
-│  │                 │  label: weka.io/supports-clients=true          │
+│  │ WekaClient CRD  │  Runs WEKA client process on nodes with         │
+│  │                 │  label: weka.io/supports-clients=true           │
 │  └─────────────────┘                                                 │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Deployment Flow
 
-1. **Install WEKA Operator** - Helm chart that manages WEKA components
-2. **Deploy WekaClient** - Operator starts WEKA client containers on labeled nodes, connecting them to the WEKA backend cluster
-3. **Install CSI Plugin** - Helm chart that enables Kubernetes to provision volumes from WEKA
-4. **Create StorageClass** - Defines how PVs are provisioned (filesystem, mount options)
-5. **Create PVCs** - Applications request storage; CSI plugin creates directories on WEKA and mounts them into pods
+The general flow for a deployment is:
 
-### WEKA Operator CRDs
+1. Deploy Terraform
 
-| CRD | Purpose |
-|-----|---------|
-| `WekaClient` | Deploys WEKA client containers on selected nodes |
-| `WekaPolicy` | Runs one-time node operations (e.g., `ensure-nics` to create dedicated NICs) |
-| `WekaContainer` | Status tracking for client containers (managed by operator) |
+   * A `terraform.tfvars.example` is provided as guide
+   * The included Terraform builds a dedicated WEKA cluster and/or an EKS cluster, depending on the deployment type
+   * Assumes some existing infrastructure (e.g. VPC, subnets)
 
-### Storage Flow
+2. Install the WEKA Kubernetes operator
 
-```yaml
-# StorageClass defines provisioning parameters
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: storageclass-wekafs-dir
-provisioner: csi.weka.io
-parameters:
-  volumeType: dir/v1
-  filesystemName: default
----
-# PVC requests storage from the StorageClass
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: my-data
-spec:
-  storageClassName: storageclass-wekafs-dir
-  accessModes: [ReadWriteMany]
-  resources:
-    requests:
-      storage: 10Gi
----
-# Pod mounts the PVC
-apiVersion: v1
-kind: Pod
-spec:
-  containers:
-    - name: app
-      volumeMounts:
-        - name: data
-          mountPath: /data
-  volumes:
-    - name: data
-      persistentVolumeClaim:
-        claimName: my-data
-```
+   * A helm chart is available for installing the operator
+
+3. Deploy WEKA custom resources
+
+   * A set of core manifests is provided for creating the WEKA storage cluster
+   * `WekaCluster` and `WekaClient` CRs
+
+4. Install CSI plugin
+
+   * Can be installed as part of the operator or separately
+
+5. Set up test application to consume WEKA storage
+
+   * Examples are provided for creating a `StorageClass` and `PVC` that application pods can use

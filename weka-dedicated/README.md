@@ -21,7 +21,7 @@ Separate WEKA storage cluster with EKS compute cluster.
 
 ## Directory Structure
 
-```
+```bash
 weka-dedicated/
 ├── terraform/
 │   ├── weka-backend/    # WEKA storage cluster
@@ -36,7 +36,7 @@ weka-dedicated/
 
 ## Manual Deployment
 
-### Step 1: Deploy WEKA Backend
+## 1. Deploy WEKA Backend
 
 ```bash
 cd terraform/weka-backend
@@ -50,6 +50,7 @@ terraform apply
 See [terraform/weka-backend/README.md](terraform/weka-backend/README.md) for configuration details.
 
 Save these outputs for EKS configuration:
+
 ```bash
 # Security group for EKS nodes (use in additional_node_security_group_ids)
 terraform output -json weka_deployment_output | jq -r '.sg_ids[]'
@@ -61,7 +62,7 @@ aws ec2 describe-instances \
   --output text | tr '\t' '\n'
 ```
 
-### Step 2: Deploy EKS Cluster
+## 2. Deploy EKS Cluster
 
 ```bash
 cd ../eks
@@ -69,6 +70,7 @@ cp terraform.tfvars.example terraform.tfvars
 ```
 
 Edit terraform.tfvars:
+
 - Set `additional_node_security_group_ids` to the WEKA backend security group
 - Configure WEKA client node group with required settings:
 
@@ -91,27 +93,45 @@ terraform apply
 
 See [terraform/eks/README.md](terraform/eks/README.md) for configuration details.
 
-### Step 3: Configure kubectl
+## 3. Configure kubectl
 
 ```bash
 aws eks update-kubeconfig --name <cluster-name> --region <region>
 kubectl get nodes
 ```
 
+Expected output:
+
+```text
+NAME                                         STATUS   ROLES    AGE   VERSION
+ip-10-0-1-59.eu-west-1.compute.internal      Ready    <none>   5m    v1.33.5-eks-ecaa3a6
+ip-10-0-10-160.eu-west-1.compute.internal    Ready    <none>   5m    v1.33.5-eks-ecaa3a6
+ip-10-0-12-45.eu-west-1.compute.internal     Ready    <none>   5m    v1.33.5-eks-ecaa3a6
+```
+
 Verify WEKA client nodes are labeled:
+
 ```bash
 kubectl get nodes -l weka.io/supports-clients=true
 ```
 
-### Step 4: Deploy WEKA Operator
+Expected output:
 
-#### 4.1 Create Namespace
+```text
+NAME                                         STATUS   ROLES    AGE   VERSION
+ip-10-0-1-59.eu-west-1.compute.internal      Ready    <none>   5m    v1.33.5-eks-ecaa3a6
+ip-10-0-10-160.eu-west-1.compute.internal    Ready    <none>   5m    v1.33.5-eks-ecaa3a6
+```
+
+## 4. Deploy WEKA Operator
+
+### 4.1 Create Namespace
 
 ```bash
 kubectl create namespace weka-operator-system
 ```
 
-#### 4.2 Create Quay.io Pull Secret
+### 4.2 Create Quay.io Pull Secret
 
 ```bash
 kubectl create secret docker-registry weka-quay-io-secret \
@@ -121,25 +141,33 @@ kubectl create secret docker-registry weka-quay-io-secret \
   --docker-password="YOUR_QUAY_PASSWORD"
 ```
 
-#### 4.3 Install WEKA Operator
+### 4.3 Install WEKA Operator
 
 ```bash
 helm upgrade --install weka-operator \
   oci://quay.io/weka.io/helm/weka-operator \
   --namespace weka-operator-system \
-  --version v1.9.0 \
+  --version v1.9.1 \
   --set imagePullSecret=weka-quay-io-secret \
   --wait
 ```
 
-#### 4.4 Verify
+### 4.4 Verify
 
 ```bash
 kubectl get pods -n weka-operator-system
-# Should show: weka-operator-xxxxx Running
 ```
 
-### Step 5: Configure Hugepages
+Expected output:
+
+```text
+NAME                                                READY   STATUS    RESTARTS   AGE
+weka-operator-controller-manager-7977d977fd-hwsxc   2/2     Running   0          81s
+weka-operator-node-agent-2pwsb                      1/1     Running   0          82s
+weka-operator-node-agent-489fr                      1/1     Running   0          82s
+```
+
+## 5. Configure Hugepages
 
 WEKA clients require hugepages. The formula is **1.5 GB per core** (768 × 2MB pages per core).
 
@@ -148,6 +176,7 @@ kubectl apply -f manifests/core/hugepages-daemonset.yaml
 ```
 
 Wait 30-60 seconds for kubelet restart, then verify:
+
 ```bash
 kubectl get nodes -l weka.io/supports-clients=true \
   -o custom-columns=NAME:.metadata.name,HUGEPAGES:.status.allocatable.hugepages-2Mi
@@ -161,11 +190,12 @@ ip-10-0-1-59.eu-west-1.compute.internal     3Gi
 ip-10-0-10-160.eu-west-1.compute.internal   3Gi
 ```
 
-### Step 6: Run ensure-nics
+## 6. Run ensure-nics
 
 Creates dedicated network interfaces for WEKA's DPDK networking.
 
 Edit `manifests/core/ensure-nics.yaml`:
+
 - Set `dataNICsNumber` to match your desired core count (default: 2)
 
 ```bash
@@ -173,12 +203,19 @@ kubectl apply -f manifests/core/ensure-nics.yaml
 ```
 
 Wait for completion:
+
 ```bash
 kubectl get wekapolicies -n weka-operator-system -w
-# Wait for STATUS: Done
 ```
 
-### Step 7: Deploy WekaClient
+Wait until `STATUS` shows `Done`:
+
+```text
+NAME                 TYPE          STATUS   PROGRESS
+ensure-nics-policy   ensure-nics   Done
+```
+
+## 7. Deploy WekaClient
 
 Copy and edit the example manifest:
 
@@ -257,7 +294,7 @@ weka-client   Running                    2       2/2/2
 
 `CONTAINERS(A/C/D)` shows Active/Created/Desired - all should match when ready.
 
-#### 7.1 Verify Clients in WEKA Web UI
+### 7.1 Verify Clients in WEKA Web UI
 
 Access the WEKA web UI and verify clients appear:
 
@@ -265,15 +302,15 @@ Access the WEKA web UI and verify clients appear:
 
 The clients should appear in the WEKA GUI under the Clients section with status "UP".
 
-### Step 8: Deploy WEKA CSI Plugin
+## 8. Deploy WEKA CSI Plugin
 
-#### 8.1 Create CSI Namespace
+### 8.1 Create CSI Namespace
 
 ```bash
 kubectl create namespace csi-wekafs
 ```
 
-#### 8.2 Create API Secret
+### 8.2 Create API Secret
 
 Copy and edit the example manifest:
 
@@ -328,7 +365,7 @@ kubectl get secret csi-wekafs-api-secret -n csi-wekafs -o json | \
   jq -r '.data | to_entries[] | "\(.key): \(.value | @base64d)"'
 ```
 
-#### 8.3 Install CSI Plugin
+### 8.3 Install CSI Plugin
 
 Add the WEKA CSI helm repo:
 
@@ -378,9 +415,11 @@ csi-wekafs-node-654t7                    3/3     Running   0          2m40s
 csi-wekafs-node-nfnh4                    3/3     Running   0          2m40s
 ```
 
-You should see two controller pods (for HA) and one node pod per labeled EKS node.
+You should see:
+- Two controller pods (for HA)
+- One node pod per labeled EKS node
 
-#### 8.4 Create StorageClass
+### 8.4 Create StorageClass
 
 Review `manifests/core/storageclass-weka.yaml` and adjust as needed:
 
@@ -556,11 +595,11 @@ export QUAY_PASSWORD=your-password
 ### Environment Variables
 
 | Variable | Description | Default |
-|----------|-------------|---------|
+| ---------- | ------------- | --------- |
 | `CLUSTER_NAME` | EKS cluster name | Required |
 | `QUAY_USERNAME` | Quay.io username | Required |
 | `QUAY_PASSWORD` | Quay.io password | Required |
-| `WEKA_OPERATOR_VERSION` | Operator Helm chart version | `v1.9.0` |
+| `WEKA_OPERATOR_VERSION` | Operator Helm chart version | `v1.9.1` |
 
 ### What the Script Does
 
@@ -630,12 +669,3 @@ kubectl get nodes -l weka.io/supports-clients=true \
 # WEKA client logs
 kubectl logs -n weka-operator-system -l mode=client
 ```
-
-### Common Issues
-
-| Issue | Solution |
-|-------|----------|
-| `ImagePullBackOff` | Check Quay.io credentials |
-| `Insufficient hugepages` | Verify hugepages DaemonSet ran |
-| `ensure-nics stuck` | Check IMDS hop limit is 2 |
-| `Connection refused` | Check security groups |
