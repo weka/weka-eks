@@ -6,9 +6,14 @@ metadata:
 spec:
   nodeSelector:
     weka.io/supports-clients: "true"
+  tolerations:
+    - key: "weka.io/client"
+      operator: "Equal"
+      value: "true"
+      effect: "NoSchedule"
   containers:
   - name: test-container
-    image: busybox
+    image: busybox:1.37.0
     volumeMounts:
     - name: weka-volume
       mountPath: "/data"

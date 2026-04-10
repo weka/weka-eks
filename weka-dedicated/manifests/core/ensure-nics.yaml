@@ -6,13 +6,12 @@ metadata:
 spec:
   type: "ensure-nics"
   # WEKA container image - update version as needed
-  image: "quay.io/weka.io/weka-in-container:4.4.10.183"
+  image: "quay.io/weka.io/weka-in-container:4.4.21.2"
   imagePullSecret: "weka-quay-io-secret"
   payload:
     ensureNICsPayload:
       type: aws
       nodeSelector:
         weka.io/supports-clients: "true"
-      # Number of dedicated NICs to create per node
-      # This should match coresNum in WekaClient
-      dataNICsNumber: 2
+      # Total secondary NICs per node (coresNum + 1 for EKS VPC CNI)
+      dataNICsNumber: 3

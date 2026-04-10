@@ -58,7 +58,7 @@ variable "assign_public_ip" {
 variable "weka_version" {
   description = "WEKA software version"
   type        = string
-  default     = "4.4.10.183"
+  default     = "4.4.21.2"
 }
 
 variable "get_weka_io_token" {

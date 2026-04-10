@@ -1,8 +1,11 @@
 node:
   nodeSelector:
     weka.io/supports-clients: "true"
+  tolerations:
+    - key: "weka.io/client"
+      operator: "Equal"
+      value: "true"
+      effect: "NoSchedule"
 
 pluginConfig:
   allowInsecureHttps: true
-#
-#allowInsecureHttps: true

@@ -18,11 +18,11 @@ WEKA backend and client processes run together on the same EKS nodes. Each node 
 
 ### [hyperpod-dedicated](hyperpod-dedicated/)
 
-Similar to weka-dedicated, with a standalone WEKA storage cluster and an EKS cluster for worker nodes and applicaiton pods. However, in this deployment model, client instances are provisioned and managed by SageMaker HyperPod, and then added to the EKS cluster to be used as worker nodes
+Similar to weka-dedicated, with a standalone WEKA storage cluster and an EKS cluster for worker nodes and applicaiton pods. However, in this deployment model, client instances are provisioned and managed by SageMaker HyperPod, and then added to the EKS cluster as worker nodes
 
 ### [hyperpod-axon](hyperpod-axon/)
 
-Similar to weka-axon, but Sagemaker Hyperod provisons all the underlying EC2 instances. Those instances are added to an EKS cluster, where thye're used for deploying both the WEKA cluster and worker pods.
+Similar to weka-axon, but SageMaker HyperPod provisions all the underlying EC2 instances. Those instances are added to an EKS cluster, where they're used for deploying both the WEKA cluster and worker pods.
 
 ## Deployment
 
@@ -31,9 +31,9 @@ See the README in each deployment model for detailed instructions. Each module i
 ### Prerequisites
 
 * AWS CLI configured
-* Terraform 1.5+
+* Terraform >= 1.6
 * kubectl, Helm 3.x
-* WEKA download token from ([get.weka.io](https://get.weka.io))
+* WEKA download token from [get.weka.io](https://get.weka.io)
 * Quay.io credentials for WEKA images
 
 ### How It Works

@@ -1,10 +1,14 @@
 terraform {
-  required_version = ">= 1.5"
+  required_version = ">= 1.6"
 
   required_providers {
     aws = {
       source  = "hashicorp/aws"
       version = "~> 6.0"
+    }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
     }
   }
 }
@@ -16,10 +20,29 @@ provider "aws" {
 data "aws_partition" "current" {}
 
 # -----------------------------------------------------------------------------
+# Locals
+# -----------------------------------------------------------------------------
+locals {
+  eni_tag_value_effective = var.eni_tag_value != null ? var.eni_tag_value : var.cluster_name
+
+  # Launch templates are needed when any of these conditions are true:
+  # Per-node-group: imds_hop_limit_2, enable_cpu_manager_static, disable_hyperthreading, hugepages_count
+  # Global: additional_node_security_group_ids (SGs are attached via LT)
+  node_groups_use_lt = {
+    for k, v in var.node_groups : k => v
+    if try(v.imds_hop_limit_2, false) ||
+       try(v.enable_cpu_manager_static, false) ||
+       try(v.disable_hyperthreading, false) ||
+       try(v.hugepages_count, 0) > 0 ||
+       length(var.additional_node_security_group_ids) > 0
+  }
+}
+
+# -----------------------------------------------------------------------------
 # EKS Cluster IAM Role
 # -----------------------------------------------------------------------------
 resource "aws_iam_role" "cluster" {
-  name = "${var.cluster_name}-cluster-role"
+  name_prefix = "${var.cluster_name}-eks-cluster-"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -54,7 +77,7 @@ resource "aws_iam_role_policy_attachment" "cluster_policies" {
 # -----------------------------------------------------------------------------
 resource "aws_eks_cluster" "main" {
   name     = var.cluster_name
-  version  = var.cluster_version
+  version  = var.kubernetes_version
   role_arn = aws_iam_role.cluster.arn
 
   vpc_config {
@@ -105,7 +128,7 @@ resource "aws_iam_openid_connect_provider" "cluster" {
 # Node IAM Role
 # -----------------------------------------------------------------------------
 resource "aws_iam_role" "nodes" {
-  name = "${var.cluster_name}-node-role"
+  name_prefix = "${var.cluster_name}-eks-nodes-"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -141,16 +164,29 @@ resource "aws_iam_role_policy_attachment" "nodes_ssm" {
 }
 
 # -----------------------------------------------------------------------------
-# Launch Template for WEKA client nodes (IMDS hop limit 2)
+# Launch Templates (created only for node groups that need them)
 # -----------------------------------------------------------------------------
 resource "aws_launch_template" "nodes" {
-  for_each    = { for k, v in var.node_groups : k => v if v.imds_hop_limit_2 }
+  for_each    = local.node_groups_use_lt
   name_prefix = "${var.cluster_name}-${each.key}-"
 
-  metadata_options {
-    http_endpoint               = "enabled"
-    http_tokens                 = "required"
-    http_put_response_hop_limit = 2
+  # IMDS hop limit 2 required for WEKA operator ENI management from pods
+  dynamic "metadata_options" {
+    for_each = try(each.value.imds_hop_limit_2, false) ? [1] : []
+    content {
+      http_endpoint               = "enabled"
+      http_tokens                 = "required"
+      http_put_response_hop_limit = 2
+    }
+  }
+
+  # Disable hyperthreading for single-threaded performance (WEKA backends primarily)
+  dynamic "cpu_options" {
+    for_each = try(each.value.disable_hyperthreading, false) ? [1] : []
+    content {
+      core_count       = each.value.core_count
+      threads_per_core = 1
+    }
   }
 
   monitoring {
@@ -175,6 +211,16 @@ resource "aws_launch_template" "nodes" {
 
   key_name = var.key_pair_name
 
+  # nodeadm user data for hugepages, CPU manager static policy, or custom cluster DNS
+  user_data = (try(each.value.enable_cpu_manager_static, false) || try(each.value.hugepages_count, 0) > 0 || var.cluster_dns_ip != null) ? base64encode(
+    templatefile("${path.module}/nodeadm-userdata.yaml.tftpl", {
+      hugepages_count              = try(each.value.hugepages_count, 0)
+      enable_cpu_manager_static    = try(each.value.enable_cpu_manager_static, false)
+      cpu_manager_reconcile_period = var.cpu_manager_reconcile_period
+      cluster_dns_ip               = var.cluster_dns_ip
+    })
+  ) : null
+
   tag_specifications {
     resource_type = "instance"
     tags = merge(var.tags, {
@@ -192,7 +238,7 @@ resource "aws_eks_node_group" "nodes" {
   for_each = var.node_groups
 
   cluster_name    = aws_eks_cluster.main.name
-  node_group_name = "${var.cluster_name}-${each.key}"
+  node_group_name = each.key
   node_role_arn   = aws_iam_role.nodes.arn
   subnet_ids      = var.subnet_ids
 
@@ -206,10 +252,11 @@ resource "aws_eks_node_group" "nodes" {
   ami_type       = each.value.ami_type
   capacity_type  = each.value.capacity_type
 
-  disk_size = each.value.imds_hop_limit_2 ? null : each.value.disk_size
+  # disk_size must be null when a launch template is used (disk defined in LT block_device_mappings)
+  disk_size = contains(keys(local.node_groups_use_lt), each.key) ? null : each.value.disk_size
 
   dynamic "launch_template" {
-    for_each = each.value.imds_hop_limit_2 ? [1] : []
+    for_each = contains(keys(local.node_groups_use_lt), each.key) ? [1] : []
     content {
       id      = aws_launch_template.nodes[each.key].id
       version = "$Latest"
@@ -277,4 +324,105 @@ resource "aws_eks_access_policy_association" "admin" {
   }
 
   depends_on = [aws_eks_access_entry.admin]
+}
+
+# -----------------------------------------------------------------------------
+# IRSA role for WEKA operator/controller (ENI management)
+# -----------------------------------------------------------------------------
+data "aws_iam_policy_document" "weka_operator_assume_role" {
+  count = var.enable_weka_operator_irsa ? 1 : 0
+
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.cluster.arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")}:sub"
+      values   = ["system:serviceaccount:${var.weka_operator_namespace}:${var.weka_operator_service_account}"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "weka_operator" {
+  count              = var.enable_weka_operator_irsa ? 1 : 0
+  name_prefix        = "${var.cluster_name}-weka-operator-"
+  assume_role_policy = data.aws_iam_policy_document.weka_operator_assume_role[0].json
+  tags               = var.tags
+}
+
+data "aws_iam_policy_document" "weka_operator_eni" {
+  count = var.enable_weka_operator_irsa ? 1 : 0
+
+  statement {
+    sid    = "EC2Describe"
+    effect = "Allow"
+    actions = [
+      "ec2:DescribeInstances",
+      "ec2:DescribeNetworkInterfaces",
+      "ec2:DescribeSubnets",
+      "ec2:DescribeSecurityGroups",
+      "ec2:DescribeVpcs",
+      "ec2:DescribeInstanceTypes"
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "EC2ManageENIs"
+    effect = "Allow"
+    actions = [
+      "ec2:CreateNetworkInterface",
+      "ec2:AttachNetworkInterface",
+      "ec2:DetachNetworkInterface",
+      "ec2:DeleteNetworkInterface",
+      "ec2:ModifyNetworkInterfaceAttribute",
+      "ec2:AssignPrivateIpAddresses",
+      "ec2:UnassignPrivateIpAddresses",
+      "ec2:CreateTags"
+    ]
+    resources = ["*"]
+
+    dynamic "condition" {
+      for_each = var.enforce_eni_tag_conditions ? [1] : []
+      content {
+        test     = "StringEquals"
+        variable = "aws:RequestTag/${var.eni_tag_key}"
+        values   = [local.eni_tag_value_effective]
+      }
+    }
+
+    dynamic "condition" {
+      for_each = var.enforce_eni_tag_conditions ? [1] : []
+      content {
+        test     = "StringEquals"
+        variable = "ec2:ResourceTag/${var.eni_tag_key}"
+        values   = [local.eni_tag_value_effective]
+      }
+    }
+  }
+}
+
+resource "aws_iam_policy" "weka_operator_eni" {
+  count       = var.enable_weka_operator_irsa ? 1 : 0
+  name_prefix = "${var.cluster_name}-weka-eni-"
+  policy      = data.aws_iam_policy_document.weka_operator_eni[0].json
+  tags        = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "weka_operator_eni" {
+  count      = var.enable_weka_operator_irsa ? 1 : 0
+  role       = aws_iam_role.weka_operator[0].name
+  policy_arn = aws_iam_policy.weka_operator_eni[0].arn
 }

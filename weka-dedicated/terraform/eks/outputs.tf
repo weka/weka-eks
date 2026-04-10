@@ -65,6 +65,11 @@ output "node_groups" {
   }
 }
 
+output "weka_operator_irsa_role_arn" {
+  description = "IRSA role ARN for the WEKA operator (annotate the operator service account with this)"
+  value       = var.enable_weka_operator_irsa ? aws_iam_role.weka_operator[0].arn : null
+}
+
 output "configure_kubectl" {
   description = "Command to configure kubectl"
   value       = "aws eks update-kubeconfig --name ${aws_eks_cluster.main.name} --region ${var.region}"

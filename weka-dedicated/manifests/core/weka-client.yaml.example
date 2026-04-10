@@ -4,13 +4,18 @@ metadata:
   name: weka-client
   namespace: weka-operator-system
 spec:
-  image: quay.io/weka.io/weka-in-container:4.4.10.183
+  image: quay.io/weka.io/weka-in-container:4.4.21.2
   imagePullSecret: weka-quay-io-secret
   driversDistService: "https://drivers.weka.io"
   portRange:
     basePort: 46000
   nodeSelector:
     weka.io/supports-clients: "true"
+  rawTolerations:
+    - key: "weka.io/client"
+      operator: "Equal"
+      value: "true"
+      effect: "NoSchedule"
   joinIpPorts:
     - "10.0.67.159:14000"
     - "10.0.67.15:14000"

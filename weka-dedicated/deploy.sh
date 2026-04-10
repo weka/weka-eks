@@ -4,8 +4,8 @@
 #
 # Prerequisites:
 #   - AWS CLI configured and authenticated
-#   - kubectl, helm installed
-#   - Manifests configured (weka-client.yaml, csi-wekafs-api-secret.yaml, etc.)
+#   - kubectl, helm, jq installed
+#   - EKS cluster and WEKA backend already deployed via Terraform
 #
 # Usage:
 #   ./deploy.sh <cluster-name> <quay-username> <quay-password>
@@ -15,6 +15,8 @@
 #   export CLUSTER_NAME=my-eks-cluster
 #   export QUAY_USERNAME=your-username
 #   export QUAY_PASSWORD=your-password
+#   export WEKA_BACKEND_NAME=eks-storage-cluster
+#   export WEKA_SECRET_ARN=arn:aws:secretsmanager:...
 #   ./deploy.sh
 
 set -e
@@ -88,6 +90,51 @@ do_cleanup() {
 # -----------------------------------------------------------------------------
 # Parse arguments
 # -----------------------------------------------------------------------------
+show_help() {
+    cat <<EOF
+Usage: $0 [OPTIONS] [cluster-name] [quay-username] [quay-password]
+
+Deploy WEKA on an existing EKS cluster. Automatically generates
+weka-client.yaml and csi-wekafs-api-secret.yaml from the WEKA
+backend if WEKA_BACKEND_NAME and WEKA_SECRET_ARN are set.
+
+Arguments:
+  cluster-name      EKS cluster name (or set CLUSTER_NAME)
+  quay-username     Quay.io username (or set QUAY_USERNAME)
+  quay-password     Quay.io password (or set QUAY_PASSWORD)
+
+Options:
+  -h, --help        Show this help message
+  -c, --cleanup     Remove all WEKA components from the cluster
+
+Environment variables:
+  CLUSTER_NAME              EKS cluster name
+  QUAY_USERNAME             Quay.io username
+  QUAY_PASSWORD             Quay.io password
+  WEKA_BACKEND_NAME         WEKA backend cluster name tag (for auto-generating manifests)
+  WEKA_SECRET_ARN           Secrets Manager ARN for WEKA password
+  AWS_REGION                AWS region (for backend queries)
+  WEKA_OPERATOR_VERSION     Operator Helm chart version (default: v1.11.0)
+
+Examples:
+  # Generate manifests automatically and deploy
+  WEKA_BACKEND_NAME=eks-storage-cluster \\
+  WEKA_SECRET_ARN=arn:aws:secretsmanager:eu-west-1:123456:secret:weka/... \\
+  $0 my-eks-cluster myuser mypass
+
+  # Deploy with pre-configured manifests
+  $0 my-eks-cluster myuser mypass
+
+  # Cleanup
+  $0 --cleanup my-eks-cluster
+EOF
+    exit 0
+}
+
+if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    show_help
+fi
+
 if [[ "$1" == "--cleanup" || "$1" == "-c" ]]; then
     do_cleanup "$2"
 fi
@@ -96,7 +143,7 @@ fi
 CLUSTER_NAME="${1:-$CLUSTER_NAME}"
 QUAY_USERNAME="${2:-$QUAY_USERNAME}"
 QUAY_PASSWORD="${3:-$QUAY_PASSWORD}"
-WEKA_OPERATOR_VERSION="${WEKA_OPERATOR_VERSION:-v1.9.0}"
+WEKA_OPERATOR_VERSION="${WEKA_OPERATOR_VERSION:-v1.11.0}"
 
 # Validate inputs
 if [[ -z "$CLUSTER_NAME" ]]; then
@@ -119,18 +166,33 @@ echo "  Cluster: $CLUSTER_NAME"
 echo "  Operator: $WEKA_OPERATOR_VERSION"
 echo ""
 
+# Generate manifests if backend info is provided and files don't exist
+if [[ -n "$WEKA_BACKEND_NAME" && -n "$WEKA_SECRET_ARN" ]]; then
+    if [[ ! -f "$MANIFESTS_DIR/core/weka-client.yaml" || ! -f "$MANIFESTS_DIR/core/csi-wekafs-api-secret.yaml" ]]; then
+        echo "Generating manifests from WEKA backend..."
+        "$SCRIPT_DIR/generate-manifests.sh" \
+            --backend-name "$WEKA_BACKEND_NAME" \
+            --secret-arn "$WEKA_SECRET_ARN"
+        echo ""
+    else
+        echo "Manifests already exist, skipping generation."
+        echo "  Delete them to regenerate from backend: rm manifests/core/weka-client.yaml manifests/core/csi-wekafs-api-secret.yaml"
+        echo ""
+    fi
+fi
+
 # Check for required manifest files
 if [[ ! -f "$MANIFESTS_DIR/core/weka-client.yaml" ]]; then
     echo "[ERROR] manifests/core/weka-client.yaml not found"
-    echo "  Copy the example file and edit with your values:"
-    echo "  cp manifests/core/weka-client.yaml.example manifests/core/weka-client.yaml"
+    echo "  Either set WEKA_BACKEND_NAME + WEKA_SECRET_ARN to generate automatically,"
+    echo "  or copy and edit the example: cp manifests/core/weka-client.yaml.example manifests/core/weka-client.yaml"
     exit 1
 fi
 
 if [[ ! -f "$MANIFESTS_DIR/core/csi-wekafs-api-secret.yaml" ]]; then
     echo "[ERROR] manifests/core/csi-wekafs-api-secret.yaml not found"
-    echo "  Copy the example file and edit with your values:"
-    echo "  cp manifests/core/csi-wekafs-api-secret.yaml.example manifests/core/csi-wekafs-api-secret.yaml"
+    echo "  Either set WEKA_BACKEND_NAME + WEKA_SECRET_ARN to generate automatically,"
+    echo "  or copy and edit the example: cp manifests/core/csi-wekafs-api-secret.yaml.example manifests/core/csi-wekafs-api-secret.yaml"
     exit 1
 fi
 
@@ -157,25 +219,19 @@ helm upgrade --install weka-operator \
     --namespace "$WEKA_OPERATOR_NS" \
     --version "$WEKA_OPERATOR_VERSION" \
     --set imagePullSecret=weka-quay-io-secret \
+    -f "$MANIFESTS_DIR/core/values-weka-operator.yaml" \
     --wait
 
 echo "[OK] WEKA Operator installed"
 
-# Step 3: Configure hugepages
+# Step 3: Deploy ensure-nics
+# Note: Hugepages are configured at node boot via the launch template user data.
 echo ""
-echo "Step 3: Configuring hugepages..."
-kubectl apply -f "$MANIFESTS_DIR/core/hugepages-daemonset.yaml"
-echo "[OK] Hugepages DaemonSet deployed"
-echo "  Waiting 30s for kubelet restart..."
-sleep 30
-
-# Step 4: Deploy ensure-nics
-echo ""
-echo "Step 4: Running ensure-nics..."
+echo "Step 3: Running ensure-nics..."
 kubectl apply -f "$MANIFESTS_DIR/core/ensure-nics.yaml"
 echo "  Waiting for ensure-nics to complete..."
 
-# Poll for completion (max 2 minutes)
+# Wait for initial completion
 for i in {1..24}; do
     STATUS=$(kubectl get wekapolicies -n "$WEKA_OPERATOR_NS" -o jsonpath='{.items[0].status.status}' 2>/dev/null || echo "")
     if [[ "$STATUS" == "Done" ]]; then
@@ -189,17 +245,41 @@ for i in {1..24}; do
     sleep 5
 done
 
-# Step 5: Deploy WEKA Client
+# Step 4: Deploy WEKA Client
 echo ""
-echo "Step 5: Deploying WEKA Client..."
+echo "Step 4: Deploying WEKA Client..."
 kubectl apply -f "$MANIFESTS_DIR/core/weka-client.yaml"
-echo "[OK] WekaClient deployed"
-echo "  Waiting 30s for client pods to start..."
-sleep 30
+echo "  Waiting for all client containers to be active..."
 
-# Step 6: Deploy CSI Plugin
+# Get desired container count from the WekaClient spec
+DESIRED=$(kubectl get wekaclient weka-client -n "$WEKA_OPERATOR_NS" \
+    -o jsonpath='{.status.stats.containers.desired}' 2>/dev/null || echo "0")
+
+# Wait for all containers to reach Running (up to 10 minutes)
+for i in {1..120}; do
+    ACTIVE=$(kubectl get wekaclient weka-client -n "$WEKA_OPERATOR_NS" \
+        -o jsonpath='{.status.printer.containers}' 2>/dev/null || echo "")
+    DESIRED=$(kubectl get wekaclient weka-client -n "$WEKA_OPERATOR_NS" \
+        -o jsonpath='{.status.stats.containers.desired}' 2>/dev/null || echo "0")
+
+    if [[ -n "$ACTIVE" && "$DESIRED" -gt 0 ]]; then
+        # ACTIVE format is "A/C/D" (active/created/desired)
+        A=$(echo "$ACTIVE" | cut -d/ -f1)
+        D=$(echo "$ACTIVE" | cut -d/ -f3)
+        if [[ "$A" == "$D" && "$A" -gt 0 ]]; then
+            echo "[OK] All $A client containers active ($ACTIVE)"
+            break
+        fi
+        echo "  Containers: $ACTIVE (waiting for $D active)..."
+    else
+        echo "  Waiting for client containers to be created..."
+    fi
+    sleep 5
+done
+
+# Step 5: Deploy CSI Plugin
 echo ""
-echo "Step 6: Deploying WEKA CSI Plugin..."
+echo "Step 5: Deploying WEKA CSI Plugin..."
 kubectl create namespace "$CSI_NS" --dry-run=client -o yaml | kubectl apply -f -
 
 # Apply API secret if it exists
@@ -242,9 +322,9 @@ echo ""
 echo "CSI Pods:"
 kubectl get pods -n "$CSI_NS"
 
-# Step 7: Test dynamic provisioning
+# Step 6: Test dynamic provisioning
 echo ""
-echo "Step 7: Testing dynamic provisioning..."
+echo "Step 6: Testing dynamic provisioning..."
 kubectl create namespace weka-test --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -f "$MANIFESTS_DIR/test/"
 

@@ -13,7 +13,7 @@ parameters:
   # name of the secret that stores API credentials for a cluster
   # change the name of secret to match secret of a particular cluster (if you have several Weka clusters)
   csi.storage.k8s.io/provisioner-secret-name: &secretName csi-wekafs-api-secret
-  # change the name of the namespace in which the cluster API credentials
+  # change the namespace to match where the cluster API credentials are stored
   csi.storage.k8s.io/provisioner-secret-namespace: &secretNamespace csi-wekafs
   # do not change anything below this line, or set to same parameters as above
   csi.storage.k8s.io/controller-publish-secret-name: *secretName

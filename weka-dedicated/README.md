@@ -14,14 +14,14 @@ Separate WEKA storage cluster with EKS compute cluster.
 ## Prerequisites
 
 - AWS CLI configured with appropriate permissions
-- Terraform 1.5+
+- Terraform >= 1.6
 - kubectl, Helm 3.x
 - WEKA download token from [get.weka.io](https://get.weka.io)
 - Quay.io credentials for WEKA container images
 
 ## Directory Structure
 
-```bash
+```text
 weka-dedicated/
 ├── terraform/
 │   ├── weka-backend/    # WEKA storage cluster
@@ -29,6 +29,7 @@ weka-dedicated/
 ├── manifests/           # Kubernetes manifests
 │   ├── core/            # Required manifests (weka-client, CSI, etc.)
 │   └── test/            # Test PVC and pod
+├── generate-manifests.sh # Generate weka-client.yaml and CSI secret from backend
 └── deploy.sh            # Automated deployment script
 ```
 
@@ -36,15 +37,16 @@ weka-dedicated/
 
 ## Manual Deployment
 
+All commands assume you are in the `weka-dedicated/` directory.
+
 ## 1. Deploy WEKA Backend
 
 ```bash
 cd terraform/weka-backend
 cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with your values
 
-terraform init
-terraform apply
+# Edit terraform.tfvars with your values
+terraform init && terraform apply
 ```
 
 See [terraform/weka-backend/README.md](terraform/weka-backend/README.md) for configuration details.
@@ -69,16 +71,30 @@ cd ../eks
 cp terraform.tfvars.example terraform.tfvars
 ```
 
-Edit terraform.tfvars:
+Edit `terraform.tfvars`:
 
 - Set `additional_node_security_group_ids` to the WEKA backend security group
 - Configure WEKA client node group with required settings:
 
 ```hcl
 node_groups = {
+  system = {
+    instance_types = ["m6i.large"]
+    desired_size   = 2
+    min_size       = 1
+    max_size       = 3
+    disk_size      = 50
+  }
+
   clients = {
-    instance_types   = ["c6i.12xlarge"]
-    imds_hop_limit_2 = true  # Required for ensure-nics
+    instance_types            = ["c6i.12xlarge"]
+    desired_size              = 2
+    min_size                  = 1
+    max_size                  = 4
+    disk_size                 = 100
+    imds_hop_limit_2          = true  # Required for ensure-nics
+    enable_cpu_manager_static = true  # DPDK CPU allocation
+    hugepages_count           = 2048  # ~1.5 GiB per core, rounded up
     labels = {
       "weka.io/supports-clients" = "true"
     }
@@ -87,26 +103,29 @@ node_groups = {
 ```
 
 ```bash
-terraform init
-terraform apply
+terraform init && terraform apply
+
+# Configure kubectl
+$(terraform output -raw configure_kubectl)
+cd ../..
 ```
 
 See [terraform/eks/README.md](terraform/eks/README.md) for configuration details.
 
-## 3. Configure kubectl
+## 3. Verify Nodes
 
 ```bash
-aws eks update-kubeconfig --name <cluster-name> --region <region>
 kubectl get nodes
 ```
 
 Expected output:
 
 ```text
-NAME                                         STATUS   ROLES    AGE   VERSION
-ip-10-0-1-59.eu-west-1.compute.internal      Ready    <none>   5m    v1.33.5-eks-ecaa3a6
-ip-10-0-10-160.eu-west-1.compute.internal    Ready    <none>   5m    v1.33.5-eks-ecaa3a6
-ip-10-0-12-45.eu-west-1.compute.internal     Ready    <none>   5m    v1.33.5-eks-ecaa3a6
+NAME                                       STATUS   ROLES    AGE   VERSION
+ip-10-0-0-217.eu-west-1.compute.internal   Ready    <none>   45m   v1.33.8-eks-f69f56f
+ip-10-0-2-172.eu-west-1.compute.internal   Ready    <none>   45m   v1.33.8-eks-f69f56f
+ip-10-0-7-51.eu-west-1.compute.internal    Ready    <none>   45m   v1.33.8-eks-f69f56f
+ip-10-0-9-215.eu-west-1.compute.internal   Ready    <none>   45m   v1.33.8-eks-f69f56f
 ```
 
 Verify WEKA client nodes are labeled:
@@ -119,8 +138,8 @@ Expected output:
 
 ```text
 NAME                                         STATUS   ROLES    AGE   VERSION
-ip-10-0-1-59.eu-west-1.compute.internal      Ready    <none>   5m    v1.33.5-eks-ecaa3a6
-ip-10-0-10-160.eu-west-1.compute.internal    Ready    <none>   5m    v1.33.5-eks-ecaa3a6
+ip-10-0-1-59.eu-west-1.compute.internal      Ready    <none>   5m    v1.33.8-eks-f69f56f
+ip-10-0-10-160.eu-west-1.compute.internal    Ready    <none>   5m    v1.33.8-eks-f69f56f
 ```
 
 ## 4. Deploy WEKA Operator
@@ -147,8 +166,9 @@ kubectl create secret docker-registry weka-quay-io-secret \
 helm upgrade --install weka-operator \
   oci://quay.io/weka.io/helm/weka-operator \
   --namespace weka-operator-system \
-  --version v1.9.1 \
+  --version v1.11.0 \
   --set imagePullSecret=weka-quay-io-secret \
+  -f manifests/core/values-weka-operator.yaml \
   --wait
 ```
 
@@ -167,15 +187,11 @@ weka-operator-node-agent-2pwsb                      1/1     Running   0         
 weka-operator-node-agent-489fr                      1/1     Running   0          82s
 ```
 
-## 5. Configure Hugepages
+## 5. Verify Hugepages
 
-WEKA clients require hugepages. The formula is **1.5 GB per core** (768 × 2MB pages per core).
+WEKA clients require hugepages. The formula is **~1.5 GiB per core** (768 × 2 MiB pages per core).
 
-```bash
-kubectl apply -f manifests/core/hugepages-daemonset.yaml
-```
-
-Wait 30-60 seconds for kubelet restart, then verify:
+Hugepages are configured automatically at node boot via the launch template user data (`hugepages_count` in your node group config). Verify allocation after nodes are running:
 
 ```bash
 kubectl get nodes -l weka.io/supports-clients=true \
@@ -186,8 +202,8 @@ Expected output:
 
 ```text
 NAME                                        HUGEPAGES
-ip-10-0-1-59.eu-west-1.compute.internal     3Gi
-ip-10-0-10-160.eu-west-1.compute.internal   3Gi
+ip-10-0-1-59.eu-west-1.compute.internal     4Gi
+ip-10-0-10-160.eu-west-1.compute.internal   4Gi
 ```
 
 ## 6. Run ensure-nics
@@ -196,7 +212,7 @@ Creates dedicated network interfaces for WEKA's DPDK networking.
 
 Edit `manifests/core/ensure-nics.yaml`:
 
-- Set `dataNICsNumber` to match your desired core count (default: 2)
+- Set `dataNICsNumber` to `coresNum + 1` (accounts for the EKS VPC CNI interface)
 
 ```bash
 kubectl apply -f manifests/core/ensure-nics.yaml
@@ -232,13 +248,18 @@ metadata:
   name: weka-client
   namespace: weka-operator-system
 spec:
-  image: quay.io/weka.io/weka-in-container:4.4.10.183
+  image: quay.io/weka.io/weka-in-container:4.4.21.2
   imagePullSecret: weka-quay-io-secret
   driversDistService: "https://drivers.weka.io"
   portRange:
     basePort: 46000
   nodeSelector:
     weka.io/supports-clients: "true"
+  rawTolerations:
+    - key: "weka.io/client"
+      operator: "Equal"
+      value: "true"
+      effect: "NoSchedule"
 
   # Backend IPs from Step 1 (port 14000 for management)
   joinIpPorts:
@@ -249,10 +270,10 @@ spec:
     - "10.0.64.194:14000"
     - "10.0.67.69:14000"
 
-  # Must match dataNICsNumber from ensure-nics (Step 6)
+  # dataNICsNumber in ensure-nics should be coresNum + 1
   coresNum: 2
 
-  # Formula: coresNum × 1536 (1.5GB per core)
+  # Formula: coresNum × 1536 (1.5 GiB per core)
   hugepages: 3072
 
   network:
@@ -325,7 +346,7 @@ data:
   username: admin
   password: admin-password
   scheme: https
-  endpoints: 10.0.67.159:14000, 10.0.67.15:14000,10.0.67.69:14000
+  endpoints: 10.0.67.159:14000,10.0.67.15:14000,10.0.67.69:14000
   organization: Root
 ```
 
@@ -380,6 +401,11 @@ Review `manifests/core/values-csi-wekafs.yaml`:
 node:
   nodeSelector:
     weka.io/supports-clients: "true"
+  tolerations:
+    - key: "weka.io/client"
+      operator: "Equal"
+      value: "true"
+      effect: "NoSchedule"
 
 pluginConfig:
   allowInsecureHttps: true
@@ -387,7 +413,8 @@ pluginConfig:
 
 Key settings:
 
-- **nodeSelector**: Restricts CSI node pods to WEKA client nodes only (avoids deploying on system nodes)
+- **nodeSelector**: Restricts CSI node pods to WEKA client nodes only
+- **tolerations**: Allows CSI node pods to schedule on tainted client nodes
 - **allowInsecureHttps**: Required when the WEKA backend uses self-signed SSL certificates
 
 Install the plugin:
@@ -486,7 +513,7 @@ spec:
     weka.io/supports-clients: "true"  # Schedule on WEKA client nodes
   containers:
   - name: test-container
-    image: busybox
+    image: busybox:1.37.0
     volumeMounts:
     - name: weka-volume
       mountPath: "/data"
@@ -576,41 +603,66 @@ kubectl delete namespace weka-test
 
 ## Automated Deployment
 
-After configuring the manifests, use the deployment script:
+Two scripts automate the deployment:
+
+1. **`generate-manifests.sh`** -- Queries the WEKA backend to create
+   `weka-client.yaml` and `csi-wekafs-api-secret.yaml` with the
+   correct backend IPs and credentials.
+2. **`deploy.sh`** -- Installs the operator, ensure-nics, client,
+   CSI plugin, and runs a test.
+
+### Step 1: Generate Manifests
+
+Run this first. It queries EC2 for the backend IPs and Secrets
+Manager for the password, then writes the two YAML files:
 
 ```bash
-# Deploy with arguments
+./generate-manifests.sh \
+  --backend-name eks-storage-cluster \
+  --secret-arn arn:aws:secretsmanager:eu-west-1:123456:secret:weka/...
+```
+
+The `--backend-name` is the name tag on your WEKA backend EC2
+instances. The `--secret-arn` is the Secrets Manager ARN for the
+WEKA admin password (shown in the `terraform output` of the
+weka-backend module).
+
+Run `./generate-manifests.sh --help` for all options (cores,
+hugepages, UDP mode, etc.).
+
+Review the generated files before proceeding:
+
+```bash
+cat manifests/core/weka-client.yaml
+cat manifests/core/csi-wekafs-api-secret.yaml
+```
+
+### Step 2: Deploy
+
+```bash
 ./deploy.sh <cluster-name> <quay-username> <quay-password>
+```
 
-# Or with environment variables
-export CLUSTER_NAME=my-eks-cluster
-export QUAY_USERNAME=your-username
-export QUAY_PASSWORD=your-password
-./deploy.sh
+This runs through all the Kubernetes steps: operator install,
+ensure-nics, client deployment, CSI plugin, StorageClass, and a
+PVC test.
 
-# Cleanup - remove all WEKA components
+Arguments can also be passed as environment variables:
+
+| Variable | Description |
+| ---------- | ------------- |
+| `CLUSTER_NAME` | EKS cluster name |
+| `QUAY_USERNAME` | Quay.io username |
+| `QUAY_PASSWORD` | Quay.io password |
+| `WEKA_OPERATOR_VERSION` | Operator chart version (default: `v1.11.0`) |
+
+To remove everything:
+
+```bash
 ./deploy.sh --cleanup <cluster-name>
 ```
 
-### Environment Variables
-
-| Variable | Description | Default |
-| ---------- | ------------- | --------- |
-| `CLUSTER_NAME` | EKS cluster name | Required |
-| `QUAY_USERNAME` | Quay.io username | Required |
-| `QUAY_PASSWORD` | Quay.io password | Required |
-| `WEKA_OPERATOR_VERSION` | Operator Helm chart version | `v1.9.1` |
-
-### What the Script Does
-
-1. Configures kubectl for EKS cluster
-2. Creates namespace and Quay.io pull secret
-3. Installs WEKA Operator via Helm
-4. Applies hugepages DaemonSet
-5. Applies ensure-nics WekaPolicy
-6. Applies WekaClient manifest
-7. Installs CSI plugin via Helm and applies StorageClass
-8. Runs smoke test (creates PVC and test pod)
+Run `./deploy.sh --help` for all options.
 
 ---
 
@@ -640,13 +692,9 @@ kubectl delete namespace weka-operator-system
 ### Destroy Infrastructure
 
 ```bash
-# EKS cluster
-cd terraform/eks
-terraform destroy
-
-# WEKA backend
-cd ../weka-backend
-terraform destroy
+# Run each from the module root (weka-dedicated/)
+(cd terraform/eks && terraform destroy)
+(cd terraform/weka-backend && terraform destroy)
 ```
 
 ---

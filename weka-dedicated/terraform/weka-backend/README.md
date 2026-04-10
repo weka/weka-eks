@@ -27,7 +27,7 @@ module "weka_backend" {
   cluster_name = "my-weka-cluster"
   cluster_size = 6
   instance_type = "i3en.2xlarge"
-  weka_version = "4.4.10.80"
+  weka_version = "4.4.21.2"
 
   get_weka_io_token = var.weka_token
   key_pair_name     = "my-keypair"
@@ -66,7 +66,7 @@ module "weka_backend" {
 | cluster_name | WEKA cluster name | `string` | `"eks-test"` | no |
 | cluster_size | Number of backend instances | `number` | `6` | no |
 | instance_type | Instance type | `string` | `"i3en.2xlarge"` | no |
-| weka_version | WEKA software version | `string` | `"4.4.10.80"` | no |
+| weka_version | WEKA software version | `string` | `"4.4.21.2"` | no |
 | get_weka_io_token | WEKA download token | `string` | n/a | yes |
 | vpc_id | VPC ID | `string` | n/a | yes |
 | subnet_ids | Subnet IDs for WEKA instances | `list(string)` | n/a | yes |
