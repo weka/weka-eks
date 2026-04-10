@@ -10,23 +10,37 @@ Deploy WEKA distributed storage with Amazon EKS using the WEKA Operator.
 
 ### [weka-dedicated](weka-dedicated/)
 
-A WEKA storage cluster is created with dedicated backend instances. EKS worker nodes run WEKA client containers that connect to the backend over the network. Applications access WEKA storage via the CSI plugin and PersistentVolumeClaims.
+A WEKA storage cluster is created with dedicated backend instances.
+EKS worker nodes run WEKA client containers that connect to the
+backend over the network. Applications access WEKA storage via the
+CSI plugin and PersistentVolumeClaims.
 
 ### [weka-axon](weka-axon/)
 
-WEKA backend and client processes run together on the same EKS nodes. Each node contributes local NVMe storage to the distributed filesystem while also running application workloads.
+WEKA backend and client processes run together on the same EKS
+nodes. Each node contributes local NVMe storage to the distributed
+filesystem while also running application workloads.
 
 ### [hyperpod-dedicated](hyperpod-dedicated/)
 
-Similar to weka-dedicated, with a standalone WEKA storage cluster and an EKS cluster for worker nodes and applicaiton pods. However, in this deployment model, client instances are provisioned and managed by SageMaker HyperPod, and then added to the EKS cluster as worker nodes
+Similar to weka-dedicated, with a standalone WEKA storage cluster
+and an EKS cluster for worker nodes and application pods. However,
+client instances are provisioned and managed by SageMaker HyperPod,
+and then added to the EKS cluster as worker nodes.
 
 ### [hyperpod-axon](hyperpod-axon/)
 
-Similar to weka-axon, but SageMaker HyperPod provisions all the underlying EC2 instances. Those instances are added to an EKS cluster, where they're used for deploying both the WEKA cluster and worker pods.
+Similar to weka-axon, but SageMaker HyperPod provisions the
+underlying EC2 instances. Those instances are added to an EKS
+cluster, where they're used for deploying both the WEKA cluster
+and worker pods.
 
 ## Deployment
 
-See the README in each deployment model for detailed instructions. Each module is designed to be a standalone deployment; you can create a fully working WEKA + EKS cluster using the Terraform and other code/instructions in each section.
+See the README in each deployment model for detailed instructions.
+Each module is a standalone deployment; you can create a fully
+working WEKA + EKS cluster using the Terraform and other
+code/instructions in each section.
 
 ### Prerequisites
 
@@ -38,7 +52,8 @@ See the README in each deployment model for detailed instructions. Each module i
 
 ### How It Works
 
-WEKA integrates with Kubernetes using the standard CSI (Container Storage Interface) pattern:
+WEKA integrates with Kubernetes using the standard CSI
+(Container Storage Interface) pattern:
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -66,7 +81,8 @@ The general flow for a deployment is:
 1. Deploy Terraform
 
    * A `terraform.tfvars.example` is provided as guide
-   * The included Terraform builds a dedicated WEKA cluster and/or an EKS cluster, depending on the deployment type
+   * The included Terraform builds a dedicated WEKA cluster
+     and/or an EKS cluster, depending on the deployment type
    * Assumes some existing infrastructure (e.g. VPC, subnets)
 
 2. Install the WEKA Kubernetes operator
@@ -75,7 +91,8 @@ The general flow for a deployment is:
 
 3. Deploy WEKA custom resources
 
-   * A set of core manifests is provided for creating the WEKA storage cluster
+   * Core manifests are provided for creating the WEKA
+     storage cluster
    * `WekaCluster` and `WekaClient` CRs
 
 4. Install CSI plugin
@@ -84,4 +101,5 @@ The general flow for a deployment is:
 
 5. Set up test application to consume WEKA storage
 
-   * Examples are provided for creating a `StorageClass` and `PVC` that application pods can use
+   * Examples are provided for creating a `StorageClass`
+     and `PVC` that application pods can use
