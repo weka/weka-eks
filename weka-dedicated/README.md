@@ -315,13 +315,18 @@ weka-client   Running                    2       2/2/2
 
 `CONTAINERS(A/C/D)` shows Active/Created/Desired - all should match when ready.
 
-### 7.1 Verify Clients in WEKA Web UI
+### 7.1 Access WEKA Web UI
 
-Access the WEKA web UI and verify clients appear:
+The WEKA web UI is available on port 14000 of any backend IP
+(or the ALB if configured). If the backend is in a private subnet,
+you may need port forwarding or a bastion host.
+
+Retrieve the admin password from Secrets Manager (the command is
+shown in the `terraform output` of the weka-backend module).
+
+Verify clients appear under the Clients section with status "UP":
 
 ![WEKA Clients](../img/weka-dedicated/weka-clients.png)
-
-The clients should appear in the WEKA GUI under the Clients section with status "UP".
 
 ## 8. Deploy WEKA CSI Plugin
 
@@ -443,6 +448,7 @@ csi-wekafs-node-nfnh4                    3/3     Running   0          2m40s
 ```
 
 You should see:
+
 - Two controller pods (for HA)
 - One node pod per labeled EKS node
 
