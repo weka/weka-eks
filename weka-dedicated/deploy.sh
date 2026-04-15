@@ -45,7 +45,7 @@ do_cleanup() {
 
     # Configure kubectl
     echo "Configuring kubectl..."
-    aws eks update-kubeconfig --name "$cluster_name"
+    aws eks update-kubeconfig --name "$cluster_name" $REGION_FLAG
 
     # Delete test namespace
     echo "Deleting test namespace..."
@@ -145,6 +145,11 @@ QUAY_USERNAME="${2:-$QUAY_USERNAME}"
 QUAY_PASSWORD="${3:-$QUAY_PASSWORD}"
 WEKA_OPERATOR_VERSION="${WEKA_OPERATOR_VERSION:-v1.11.0}"
 
+REGION_FLAG=""
+if [[ -n "$AWS_REGION" ]]; then
+    REGION_FLAG="--region $AWS_REGION"
+fi
+
 # Validate inputs
 if [[ -z "$CLUSTER_NAME" ]]; then
     echo "[ERROR] Cluster name required."
@@ -198,7 +203,7 @@ fi
 
 # Step 1: Configure kubectl
 echo "Step 1: Configuring kubectl..."
-aws eks update-kubeconfig --name "$CLUSTER_NAME"
+aws eks update-kubeconfig --name "$CLUSTER_NAME" $REGION_FLAG
 kubectl get nodes
 echo "[OK] kubectl configured"
 

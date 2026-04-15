@@ -1,6 +1,7 @@
 # WEKA Dedicated on EKS
 
-Separate WEKA storage cluster with EKS compute cluster.
+Deploy WEKA client containers on EKS worker nodes connected to
+a standalone WEKA backend storage cluster.
 
 ## Architecture
 
@@ -8,8 +9,11 @@ Separate WEKA storage cluster with EKS compute cluster.
 <!-- ![Architecture](../img/weka-dedicated/architecture.png) -->
 
 - **WEKA Backend**: 6+ i3en instances with NVMe storage
+  ([terraform/weka-backend/](terraform/weka-backend/README.md))
 - **EKS Cluster**: System nodes + WEKA client nodes
-- **Networking**: WEKA clients connect to backend via dedicated NICs (DPDK) or primary interface (UDP)
+  ([terraform/eks/](terraform/eks/README.md))
+- **Networking**: WEKA clients connect to backend via dedicated
+  NICs (DPDK) or primary interface (UDP)
 
 ## Prerequisites
 
@@ -17,7 +21,8 @@ Separate WEKA storage cluster with EKS compute cluster.
 - Terraform >= 1.6
 - kubectl, Helm 3.x
 - WEKA download token from [get.weka.io](https://get.weka.io)
-- Quay.io credentials for WEKA container images
+- Quay.io credentials for WEKA container images (available at
+  [get.weka.io](https://get.weka.io))
 
 ## Directory Structure
 
@@ -49,7 +54,8 @@ cp terraform.tfvars.example terraform.tfvars
 terraform init && terraform apply
 ```
 
-See [terraform/weka-backend/README.md](terraform/weka-backend/README.md) for configuration details.
+See [terraform/weka-backend/README.md](terraform/weka-backend/README.md)
+for configuration details.
 
 Save these outputs for EKS configuration:
 
@@ -189,9 +195,19 @@ weka-operator-node-agent-489fr                      1/1     Running   0         
 
 ## 5. Verify Hugepages
 
-WEKA clients require hugepages. The formula is **~1.5 GiB per core** (768 × 2 MiB pages per core).
+WEKA clients require 2 MiB hugepages. The operator requests
+per client pod:
 
-Hugepages are configured automatically at node boot via the launch template user data (`hugepages_count` in your node group config). Verify allocation after nodes are running:
+- Hugepages: `coresNum * (1500 + 64)` MiB
+- Offset: `200 + 64 * coresNum` MiB
+- Total pod request: hugepages + offset
+
+For 2 cores: `2 * 1564 = 3128` + `328` = **3456 MiB** = 1728
+pages. The `hugepages_count = 2048` (4096 MiB) in your terraform
+provides headroom.
+
+Hugepages are configured at node boot via the launch template
+user data. Verify allocation:
 
 ```bash
 kubectl get nodes -l weka.io/supports-clients=true \
@@ -273,7 +289,7 @@ spec:
   # dataNICsNumber in ensure-nics should be coresNum + 1
   coresNum: 2
 
-  # Formula: coresNum × 1536 (1.5 GiB per core)
+  # Formula: coresNum × 1564 MiB (1500 base + 64 DPDK per core)
   hugepages: 3072
 
   network:
@@ -344,7 +360,8 @@ Copy and edit the example manifest:
 cp manifests/core/csi-wekafs-api-secret.yaml.example manifests/core/csi-wekafs-api-secret.yaml
 ```
 
-Edit `manifests/core/csi-wekafs-api-secret.yaml`. All `data` values must be **base64 encoded**. For example:
+Edit `manifests/core/csi-wekafs-api-secret.yaml`. All `data`
+values must be **base64 encoded**. For example:
 
 ```yaml
 data:
@@ -474,7 +491,7 @@ kubectl get storageclass | grep weka
 
 ## Test Dynamic Provisioning
 
-This section walks through deploying a test PVC and pod to verify the WEKA CSI integration works.
+Deploy a test PVC and pod to verify the WEKA CSI integration.
 
 ### 9.1 Review Test Manifests
 

@@ -41,8 +41,8 @@ node_groups = {
     enable_cpu_manager_static = true
 
     # 2 MiB hugepages allocated at boot via nodeadm user data.
-    # WEKA clients: ~1.5 GiB per core. With 2 cores: (2 × 1.7) × 1.1 ≈ 3.74 GiB → 1915 pages.
-    # Rounded up for headroom.
+    # Per client pod: coresNum * 1564 MiB + (200 + 64 * coresNum) MiB offset.
+    # For 2 cores: 3128 + 328 = 3456 MiB = 1728 pages. Rounded up for headroom.
     hugepages_count = 2048
 
     labels = {

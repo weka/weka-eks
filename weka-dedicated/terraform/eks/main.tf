@@ -280,6 +280,10 @@ resource "aws_eks_node_group" "nodes" {
     }
   }
 
+  update_config {
+    max_unavailable = 1
+  }
+
   tags = merge(var.tags, {
     Name = "${var.cluster_name}-${each.key}"
   })
