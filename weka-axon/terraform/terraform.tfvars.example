@@ -7,7 +7,6 @@ region       = "us-west-2"
 cluster_name = "weka-axon-eks"
 
 # IAM role ARN to grant cluster-admin via EKS Access Entry (optional)
-# Example (AWS SSO):
 # admin_role_arn = "arn:aws:iam::<acct-id>:role/AWSReservedSSO_AdministratorAccess_..."
 admin_role_arn = null
 
@@ -20,7 +19,7 @@ subnet_ids = [
 ]
 
 # Prefer SSM access over SSH. Attaches AmazonSSMManagedInstanceCore to node role.
-ssm_access = true
+enable_ssm_access = true
 
 # Node groups
 # Map allows multiple groups with different settings (system, storage, etc.)
@@ -54,6 +53,11 @@ node_groups = {
     # Enable static CPU Manager for DPDK and dedicated CPU allocation
     enable_cpu_manager_static = true
 
+    # 2 MiB hugepages allocated at boot via nodeadm user data.
+    # Must cover all WEKA containers per node (drive + compute + client + offsets).
+    # See README section 3.2 for calculation details.
+    hugepages_count = 6144
+
     # Disable hyperthreading. When true, core_count must be set.
     # For i3en.12xlarge: 48 vCPU / 2 threads = 24 physical cores
     disable_hyperthreading = true
@@ -82,20 +86,6 @@ tags = {
 }
 
 # ------------------------------------------------------------
-# Optional cluster settings
-# ------------------------------------------------------------
-cluster_version         = "1.33"
-endpoint_private_access = true
-endpoint_public_access  = true
-public_access_cidrs     = ["0.0.0.0/0"] # tighten to your IP(s) if possible
-
-# Attach a self-referencing SG to WEKA nodes for high-throughput traffic
-create_weka_nodes_security_group = true
-
-# Kubelet cluster DNS. Leave null to use EKS defaults (recommended).
-cluster_dns_ip = null
-
-# ------------------------------------------------------------
 # IRSA for WEKA operator/controller (ensure-nics)
 # ------------------------------------------------------------
 enable_weka_operator_irsa = true
@@ -108,3 +98,17 @@ weka_operator_service_account = "weka-operator-controller-manager"
 enforce_eni_tag_conditions = false
 eni_tag_key                = "weka.io/cluster"
 eni_tag_value              = null
+
+# ------------------------------------------------------------
+# Optional cluster settings
+# ------------------------------------------------------------
+kubernetes_version      = "1.33"
+endpoint_private_access = true
+endpoint_public_access  = true
+public_access_cidrs     = ["0.0.0.0/0"] # tighten to your IP(s) if possible
+
+# Kubelet cluster DNS. Leave null to use EKS defaults (recommended).
+cluster_dns_ip = null
+
+# Optional: self-referencing SG for WEKA node-to-node communication
+# create_weka_nodes_security_group = false

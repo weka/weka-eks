@@ -19,7 +19,7 @@ variable "admin_role_arn" {
   default     = null
 }
 
-variable "ssm_access" {
+variable "enable_ssm_access" {
   description = "Attach AmazonSSMManagedInstanceCore to node IAM role (recommended for private subnets / no SSH)."
   type        = bool
   default     = true
@@ -39,7 +39,8 @@ variable "node_groups" {
       value  = string
       effect = string
     })))
-    imds_hop_limit_2 = optional(bool)
+    imds_hop_limit_2 = optional(bool, false)
+    hugepages_count  = optional(number, 0)
     capacity_type    = optional(string)
     ami_type         = optional(string)
     enable_cpu_manager_static = optional(bool, false)
@@ -57,7 +58,7 @@ variable "tags" {
 # -----------------------------
 # Optional cluster settings
 # -----------------------------
-variable "cluster_version" {
+variable "kubernetes_version" {
   description = "Kubernetes version"
   type        = string
   default     = "1.33"
@@ -81,10 +82,46 @@ variable "public_access_cidrs" {
   default     = ["0.0.0.0/0"]
 }
 
+variable "additional_cluster_security_group_ids" {
+  description = "Additional security groups to attach to the EKS control plane ENIs"
+  type        = list(string)
+  default     = []
+}
+
+variable "authentication_mode" {
+  description = "EKS authentication mode (API, CONFIG_MAP, or API_AND_CONFIG_MAP)."
+  type        = string
+  default     = "API"
+}
+
+variable "enabled_cluster_log_types" {
+  description = "EKS control plane log types to enable"
+  type        = list(string)
+  default     = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
+}
+
+variable "additional_node_security_group_ids" {
+  description = "Extra security groups to attach to worker nodes (via launch template)."
+  type        = list(string)
+  default     = []
+}
+
+variable "cpu_manager_reconcile_period" {
+  description = "Kubelet CPU Manager reconcile period (e.g., 10s)."
+  type        = string
+  default     = "10s"
+}
+
+variable "key_pair_name" {
+  description = "Optional EC2 key pair name for SSH access (not recommended; prefer SSM)."
+  type        = string
+  default     = null
+}
+
 variable "create_weka_nodes_security_group" {
-  description = "Create and attach a self-referencing WEKA intra-node SG"
+  description = "Create a self-referencing security group for WEKA node-to-node communication"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "cluster_dns_ip" {

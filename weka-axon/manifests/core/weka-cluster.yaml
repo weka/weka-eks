@@ -8,10 +8,12 @@ spec:
   dynamicTemplate:
     computeContainers: 6
     computeCores: 2
+    computeHugepages: 6144
     driveContainers: 6
     driveCores: 2
+    numDrives: 1
   driversDistService: https://drivers.weka.io
-  image: quay.io/weka.io/weka-in-container:4.4.10.200
+  image: quay.io/weka.io/weka-in-container:4.4.21.2
   imagePullSecret: "weka-quay-io-secret"
   gracefulDestroyDuration: "0"
   nodeSelector:
