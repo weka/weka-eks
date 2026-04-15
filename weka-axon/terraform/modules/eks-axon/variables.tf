@@ -8,14 +8,14 @@ variable "cluster_name" {
   type        = string
 }
 
-variable "cluster_version" {
+variable "kubernetes_version" {
   description = "Kubernetes version for EKS cluster"
   type        = string
-  default     = "1.32"
+  default     = "1.33"
 }
 
 variable "subnet_ids" {
-  description = "Subnet IDs for EKS control plane ENIs and worker nodes (recommend private subnets). All subnets must be in the same VPC."
+  description = "List of subnet IDs for EKS cluster and nodes"
   type        = list(string)
 }
 
@@ -32,31 +32,111 @@ variable "endpoint_public_access" {
 }
 
 variable "public_access_cidrs" {
-  description = "CIDR blocks that can access the public API server endpoint (only used if endpoint_public_access = true)"
+  description = "CIDR blocks allowed to access public API endpoint"
   type        = list(string)
   default     = ["0.0.0.0/0"]
 }
 
 variable "additional_cluster_security_group_ids" {
-  description = "Additional security groups to attach to the EKS control plane ENIs"
+  description = "Additional security group IDs to attach to the EKS cluster"
   type        = list(string)
   default     = []
 }
 
 variable "authentication_mode" {
-  description = "EKS authentication mode. For modern setups, use API (EKS Access Entry)."
+  description = "EKS authentication mode (API, CONFIG_MAP, or API_AND_CONFIG_MAP)"
   type        = string
   default     = "API"
 }
 
 variable "enabled_cluster_log_types" {
-  description = "EKS control plane log types to enable"
+  description = "List of control plane log types to enable"
   type        = list(string)
-  default     = ["api", "audit", "authenticator"]
+  default     = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
+}
+
+variable "cpu_manager_reconcile_period" {
+  description = "Kubelet CPU Manager reconcile period (e.g., 10s)."
+  type        = string
+  default     = "10s"
+}
+
+variable "cluster_dns_ip" {
+  description = "Kubelet cluster DNS IP. Leave null for EKS defaults."
+  type        = string
+  default     = null
+}
+
+# -----------------------------------------------------------------------------
+# Node groups
+# -----------------------------------------------------------------------------
+variable "node_groups" {
+  description = "Map of node group configurations"
+  type = map(object({
+    instance_types            = list(string)
+    desired_size              = number
+    min_size                  = number
+    max_size                  = number
+    disk_size                 = optional(number, 200)
+    ami_type                  = optional(string, "AL2023_x86_64_STANDARD")
+    capacity_type             = optional(string, "ON_DEMAND")
+    imds_hop_limit_2          = optional(bool, false)
+    enable_cpu_manager_static = optional(bool, false)
+    disable_hyperthreading    = optional(bool, false)
+    core_count                = optional(number, null)
+    hugepages_count           = optional(number, 0) # 2 MiB hugepages; 0 = skip
+    labels                    = optional(map(string), {})
+    taints = optional(list(object({
+      key    = string
+      value  = string
+      effect = string
+    })), [])
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue([
+      for k, v in var.node_groups :
+      !try(v.disable_hyperthreading, false) || try(v.core_count, null) != null
+    ])
+    error_message = "When disable_hyperthreading is true, core_count must be specified."
+  }
+
+  validation {
+    condition = alltrue([
+      for k, v in var.node_groups :
+      try(v.core_count, null) == null || try(v.core_count, 0) > 0
+    ])
+    error_message = "core_count must be greater than 0 when specified."
+  }
+}
+
+variable "key_pair_name" {
+  description = "EC2 Key Pair name for SSH access to nodes"
+  type        = string
+  default     = null
+}
+
+variable "additional_node_security_group_ids" {
+  description = "Additional security group IDs to attach to node launch templates (e.g., WEKA backend SG)"
+  type        = list(string)
+  default     = []
+}
+
+variable "create_weka_nodes_security_group" {
+  description = "Create a self-referencing security group for WEKA node-to-node communication (simplifies port management)"
+  type        = bool
+  default     = false
+}
+
+variable "enable_ssm_access" {
+  description = "Attach AmazonSSMManagedInstanceCore to node IAM role (recommended for private subnets / no SSH)."
+  type        = bool
+  default     = true
 }
 
 variable "admin_role_arn" {
-  description = "IAM role ARN to grant EKS cluster admin access via EKS Access Entry (optional)"
+  description = "IAM role ARN to grant EKS cluster admin access (e.g., SSO role)"
   type        = string
   default     = null
 }
@@ -68,100 +148,22 @@ variable "tags" {
 }
 
 # -----------------------------------------------------------------------------
-# Node groups
-# -----------------------------------------------------------------------------
-variable "node_groups" {
-  description = <<EOT
-Managed node groups for the EKS cluster. A map is used to template the creation
-of different node groups (e.g. system nodes, WEKA Axon nodes)
-
-For WEKA Axon, set:
-- labels: weka.io/supports-backends=true AND weka.io/supports-clients=true
-- taints: weka.io/axon=true:NoSchedule (recommended)
-- imds_hop_limit_2: true (required on AL2023 for WEKA ensure-nics)
-EOT
-
-  type = map(object({
-    instance_types   = list(string)
-    desired_size     = number
-    min_size         = number
-    max_size         = number
-    disk_size        = optional(number, 200) # GiB root volume; WEKA data lives on NVMe
-    labels           = optional(map(string), {})
-    taints = optional(list(object({
-      key    = string
-      value  = string
-      effect = string # NO_SCHEDULE | NO_EXECUTE | PREFER_NO_SCHEDULE
-    })), [])
-    imds_hop_limit_2 = optional(bool)
-    capacity_type    = optional(string, "ON_DEMAND") # or SPOT
-    ami_type         = optional(string, "AL2023_x86_64_STANDARD")
-    enable_cpu_manager_static = optional(bool, false)
-    disable_hyperthreading    = optional(bool, false)
-    core_count                = optional(number)
-  }))
-  validation {
-    condition = alltrue([
-      for ng_name, ng in var.node_groups :
-      (!try(ng.disable_hyperthreading, false)) || (try(ng.core_count, null) != null)
-    ])
-    error_message = "If disable_hyperthreading is true for a node group, core_count must be set."
-  }
-}
-
-variable "additional_node_security_group_ids" {
-  description = "Extra security groups to attach to worker nodes (via launch template)."
-  type        = list(string)
-  default     = []
-}
-
-variable "create_weka_nodes_security_group" {
-  description = "Create and attach a self-referencing security group for high-throughput node-to-node WEKA traffic (recommended for a robust walkthrough)."
-  type        = bool
-  default     = true
-}
-
-variable "ssm_access" {
-  description = "Attach AmazonSSMManagedInstanceCore to the node IAM role (recommended for private subnets / no SSH)."
-  type        = bool
-  default     = true
-}
-
-variable "key_pair_name" {
-  description = "Optional EC2 key pair name for SSH access (not recommended; prefer SSM). Only used if you enable remote access explicitly later."
-  type        = string
-  default     = null
-}
-
-variable "cpu_manager_reconcile_period" {
-  description = "Kubelet CPU Manager reconcile period (e.g., 10s)."
-  type        = string
-  default     = "10s"
-}
-
-variable "cluster_dns_ip" {
-  description = "Optional explicit Cluster DNS IP for kubelet. If null, EKS/nodeadm will use the default for the cluster service CIDR."
-  type        = string
-  default     = null
-}
-
-# -----------------------------------------------------------------------------
-# IRSA role for WEKA operator/controller (ENI management)
+# IRSA for WEKA operator/controller (ENI management)
 # -----------------------------------------------------------------------------
 variable "enable_weka_operator_irsa" {
-  description = "Create an IRSA role/policy intended for the WEKA operator/controller to perform ENI operations (ensure-nics)."
+  description = "Create an IRSA role/policy for the WEKA operator to perform ENI operations (ensure-nics)."
   type        = bool
   default     = true
 }
 
 variable "weka_operator_namespace" {
-  description = "Namespace where the WEKA operator/controller service account runs."
+  description = "Namespace where the WEKA operator controller service account runs."
   type        = string
   default     = "weka-operator-system"
 }
 
 variable "weka_operator_service_account" {
-  description = "Service account name for the WEKA operator/controller."
+  description = "Service account name for the WEKA operator controller."
   type        = string
   default     = "weka-operator-controller-manager"
 }

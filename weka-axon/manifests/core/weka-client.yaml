@@ -9,7 +9,7 @@ spec:
   cpuPolicy: dedicated
   cpuRequest: "500m"
   driversDistService: https://drivers.weka.io
-  image: quay.io/weka.io/weka-in-container:4.4.10.200
+  image: quay.io/weka.io/weka-in-container:4.4.21.2
   imagePullSecret: "weka-quay-io-secret"
   network: {}
   nodeSelector:

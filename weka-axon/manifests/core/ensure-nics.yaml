@@ -5,11 +5,13 @@ metadata:
   namespace: weka-operator-system
 spec:
   type: "ensure-nics"
-  image: "quay.io/weka.io/weka-in-container:4.4.10.200"
+  # WEKA container image - update version as needed
+  image: "quay.io/weka.io/weka-in-container:4.4.21.2"
   imagePullSecret: "weka-quay-io-secret"
   payload:
     ensureNICsPayload:
       type: aws
       nodeSelector:
         weka.io/supports-backends: "true"
+      # Total secondary NICs per node (coresNum + 1 for EKS VPC CNI)
       dataNICsNumber: 7

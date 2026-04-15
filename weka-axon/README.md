@@ -1,67 +1,34 @@
 # WEKA Axon on Amazon EKS
 
-This document provides a walkthrough for deploying WEKA Axon on Amazon EKS using Terraform and the WEKA Kubernetes Operator.
+Deploy a converged WEKA cluster on Amazon EKS, where backend
+(drive + compute), client, and application workloads all run on
+the same nodes.
 
-## What is WEKA Axon?
+## Architecture
 
-WEKA Axon is WEKA’s combined deployment model, where:
+Two node groups:
 
-* WEKA backends (drives + compute)
-* WEKA clients
-* Applications
+1. **System nodes** -- Kubernetes components (CoreDNS, kube-proxy,
+   VPC CNI), WEKA operator controller, CSI controller.
+2. **Axon nodes** -- WEKA drive + compute + client containers and
+   application pods. Large instances with local NVMe (e.g.
+   i3en.12xlarge, p5.48xlarge). Labeled with
+   `weka.io/supports-backends` and `weka.io/supports-clients`,
+   tainted with `weka.io/axon=true:NoSchedule` to restrict
+   scheduling to WEKA processes and application pods only.
 
-all run on the same hardware; in the context of EKS it means they all run on the **same Kubernetes worker nodes**. This model is ideal for EC2 instances with large amounts of local NVMe storage, allowing the WEKA filesystem to be built directly from local disks while being consumed by Kubernetes workloads via CSI.
-
-## Architecture Overview
-
-### Node Group Model
-
-The EKS cluster in this example uses **two distinct node groups**, one for handling control-plane functions and another for the WEKA storage cluster and application pods. This separation isn't strictly required for WEKA (we're doing it for simplicity in this walkthrough). Node groups may be structured differently for operational or organizational reasons. The main thing is that a node group is constructed out of nodes with local NVMe storage, which will be used by the WEKA operator for deploying the storage cluster.
-
-#### 1. System Node Group
-
-**Purpose**: Run Kubernetes and WEKA control-plane components.
-
-Characteristics:
-
-* No WEKA-specific taints
-* No WEKA scheduling labels required
-* Smaller instance types
-
-Runs:
-
-* Core Kubernetes components (CoreDNS, kube-proxy, AWS VPC CNI)
-* Cluster add-ons (metrics, logging, etc.)
-* WEKA operator controller
-* CSI controller pods
-
-#### 2. Axon Node Group
-
-Purpose: Run WEKA storage components and application workloads.
-
-Characteristics:
-
-* Large EC2 instances with local NVMe (e.g. p5.48xlarge)
-* Labeled to support both WEKA backends and clients
-* Tainted to prevent accidental scheduling of unrelated workloads
-* IMDS hop limit set to **2** (required for NIC allocation)
-* Kubelet CPU settings applied at node bootstrap
-
-Runs:
-
-* WEKA drive containers
-* WEKA compute containers
-* WEKA client containers
-* CSI node DaemonSet
-* Application pods that mount WEKA volumes
+See [terraform/README.md](terraform/README.md) for node group
+configuration details.
 
 ## Prerequisites
 
-* AWS account with permissions to create EKS, EC2, IAM, VPC resources
-* Terraform >= 1.5
+* AWS account with permissions to create EKS, EC2, IAM resources
+* Existing VPC with subnets (private subnets recommended)
+* Terraform >= 1.6
 * kubectl
 * Helm 3.x
-* Quay.io credentials for WEKA images and Helm charts
+* Quay.io credentials for WEKA images (available at
+  [get.weka.io](https://get.weka.io))
 
 ## Repository Layout
 
@@ -87,38 +54,47 @@ terraform/
   variables.tf
 manifests/
   core/
-    hugepages-daemonset.yaml
     ensure-nics.yaml
     sign-drives.yaml
+    storageclass-weka.yaml
+    values-weka-operator.yaml
     weka-cluster.yaml
     weka-client.yaml
   test/
-    storageclass-weka.yaml
     pvc.yaml
     weka-app.yaml
     weka-app-reader.yaml
+deploy.sh
 ```
 
 ## 1. Deploy EKS Infrastructure (Terraform)
 
-> **Working directory:** `terraform/`
+All commands assume you are in the `weka-axon/` directory.
+
+```bash
+cd terraform
+cp terraform.tfvars.example terraform.tfvars
+```
 
 ### 1.1 Configure Terraform
 
-The example `terraform.tfvars` file includes default values to get you started. The main variables to review are:
+Edit `terraform.tfvars`. Key variables:
 
 * `region`
 * `cluster_name`
-* `vpc_id`, `subnet_ids`
-* `enable_ssm_access`
+* `subnet_ids`
+* `admin_role_arn` (IAM role for cluster admin access)
+* `enable_ssm_access` (enabled by default for node debugging)
 
-SSM access is enabled instead of SSH keys to simplify node access for debugging.
+Hugepages must be configured per node group -- see
+[section 3.2](#32-hugepages) for sizing details.
 
 ### 1.2 Node Groups
 
-Node groups are defined using a map, allowing us to easily configure different settings for different node groups.
-
-Example:
+Node groups are defined as a map. The example below is a base
+configuration for testing on `i3en.12xlarge` instances. Adjust
+instance type, node count, and resource settings for your
+environment. Example:
 
 ```hcl
 node_groups = {
@@ -132,7 +108,6 @@ node_groups = {
       "node.kubernetes.io/role" = "system"
     }
     ami_type = "AL2023_x86_64_STANDARD"
-    enable_nodeadm_config = false
   }
 
   storage = {
@@ -144,7 +119,8 @@ node_groups = {
     disk_size = 200
     imds_hop_limit_2 = true
     ami_type = "AL2023_x86_64_STANDARD"
-    enable_nodeadm_config = true
+    enable_cpu_manager_static = true
+    hugepages_count = 6144
 
     labels = {
       "weka.io/supports-backends" = "true"
@@ -162,26 +138,19 @@ node_groups = {
 }
 ```
 
-Here we define both our system nodes and storage nodes that make up the WEKA Axon cluster. The key differences between the two maps:
-
-* Instance type and AMI
-* nodeadm configuration (controls kubelet settings)
-* Labels and taints to control where WEKA pods are scheduled
+The storage group sets labels, taints, CPU manager, hugepages,
+and IMDS hop limit for WEKA. System nodes need none of these.
 
 ### 1.3 Terraform Deployment
 
-Once you've configured `terraform.tfvars` you can create the EKS cluster:
+Create the EKS cluster (takes about 10-15 minutes):
 
 ```bash
-terraform init
-terraform apply
-```
+terraform init && terraform apply
 
-That process should take approximately 10-15 minutes.
-Once the cluster is created you can configure `kubectl` to access it:
-
-```bash
-aws eks update-kubeconfig --name <cluster-name> --region <region>
+# Configure kubectl
+$(terraform output -raw configure_kubectl)
+cd ..
 ```
 
 Verify nodes:
@@ -190,39 +159,44 @@ Verify nodes:
 kubectl get nodes -o wide
  
 NAME                                        STATUS   ROLES    AGE     VERSION               INTERNAL-IP   EXTERNAL-IP   OS-IMAGE                        KERNEL-VERSION                    CONTAINER-RUNTIME
-ip-10-0-0-183.us-west-2.compute.internal    Ready    <none>   3h14m   v1.33.5-eks-ecaa3a6   10.0.0.183    <none>        Amazon Linux 2023.10.20260105   6.12.63-84.121.amzn2023.x86_64    containerd://2.1.5
-ip-10-0-10-107.us-west-2.compute.internal   Ready    <none>   3h14m   v1.33.5-eks-ecaa3a6   10.0.10.107   <none>        Amazon Linux 2023.10.20260105   6.12.63-84.121.amzn2023.x86_64    containerd://2.1.5
-ip-10-0-10-68.us-west-2.compute.internal    Ready    <none>   3h13m   v1.33.5-eks-ecaa3a6   10.0.10.68    <none>        Amazon Linux 2023.10.20260105   6.12.63-84.121.amzn2023.x86_64    containerd://2.1.5
-ip-10-0-11-31.us-west-2.compute.internal    Ready    <none>   3h13m   v1.33.5-eks-ecaa3a6   10.0.11.31    <none>        Amazon Linux 2023.10.20260105   6.12.63-84.121.amzn2023.x86_64    containerd://2.1.5
-ip-10-0-11-54.us-west-2.compute.internal    Ready    <none>   3h13m   v1.33.5-eks-ecaa3a6   10.0.11.54    <none>        Amazon Linux 2023.10.20260105   6.12.63-84.121.amzn2023.x86_64    containerd://2.1.5
-ip-10-0-7-157.us-west-2.compute.internal    Ready    <none>   3h14m   v1.33.5-eks-ecaa3a6   10.0.7.157    <none>        Amazon Linux 2023.10.20260105   6.12.63-84.121.amzn2023.x86_64    containerd://2.1.5
-ip-10-0-8-68.us-west-2.compute.internal     Ready    <none>   3h13m   v1.33.5-eks-ecaa3a6   10.0.8.68     <none>        Amazon Linux 2023.10.20260105   6.12.63-84.121.amzn2023.x86_64    containerd://2.1.5
-ip-10-0-8-81.us-west-2.compute.internal     Ready    <none>   3h14m   v1.33.5-eks-ecaa3a6   10.0.8.81     <none>        Amazon Linux 2023.10.20260105   6.12.63-84.121.amzn2023.x86_64    containerd://2.1.5
+ip-10-0-0-183.us-west-2.compute.internal    Ready    <none>   3h14m   v1.33.8-eks-f69f56f   10.0.0.183    <none>        Amazon Linux 2023.10.20260105   6.12.63-84.121.amzn2023.x86_64    containerd://2.1.5
+ip-10-0-10-107.us-west-2.compute.internal   Ready    <none>   3h14m   v1.33.8-eks-f69f56f   10.0.10.107   <none>        Amazon Linux 2023.10.20260105   6.12.63-84.121.amzn2023.x86_64    containerd://2.1.5
+ip-10-0-10-68.us-west-2.compute.internal    Ready    <none>   3h13m   v1.33.8-eks-f69f56f   10.0.10.68    <none>        Amazon Linux 2023.10.20260105   6.12.63-84.121.amzn2023.x86_64    containerd://2.1.5
+ip-10-0-11-31.us-west-2.compute.internal    Ready    <none>   3h13m   v1.33.8-eks-f69f56f   10.0.11.31    <none>        Amazon Linux 2023.10.20260105   6.12.63-84.121.amzn2023.x86_64    containerd://2.1.5
+ip-10-0-11-54.us-west-2.compute.internal    Ready    <none>   3h13m   v1.33.8-eks-f69f56f   10.0.11.54    <none>        Amazon Linux 2023.10.20260105   6.12.63-84.121.amzn2023.x86_64    containerd://2.1.5
+ip-10-0-7-157.us-west-2.compute.internal    Ready    <none>   3h14m   v1.33.8-eks-f69f56f   10.0.7.157    <none>        Amazon Linux 2023.10.20260105   6.12.63-84.121.amzn2023.x86_64    containerd://2.1.5
+ip-10-0-8-68.us-west-2.compute.internal     Ready    <none>   3h13m   v1.33.8-eks-f69f56f   10.0.8.68     <none>        Amazon Linux 2023.10.20260105   6.12.63-84.121.amzn2023.x86_64    containerd://2.1.5
+ip-10-0-8-81.us-west-2.compute.internal     Ready    <none>   3h14m   v1.33.8-eks-f69f56f   10.0.8.81     <none>        Amazon Linux 2023.10.20260105   6.12.63-84.121.amzn2023.x86_64    containerd://2.1.5
 ```
 
 ```bash
 kubectl get nodes -L weka.io/supports-backends,weka.io/supports-clients
 
 NAME                                        STATUS   ROLES    AGE     VERSION               SUPPORTS-BACKENDS   SUPPORTS-CLIENTS
-ip-10-0-0-183.us-west-2.compute.internal    Ready    <none>   3h14m   v1.33.5-eks-ecaa3a6
-ip-10-0-10-107.us-west-2.compute.internal   Ready    <none>   3h14m   v1.33.5-eks-ecaa3a6   true                true
-ip-10-0-10-68.us-west-2.compute.internal    Ready    <none>   3h14m   v1.33.5-eks-ecaa3a6   true                true
-ip-10-0-11-31.us-west-2.compute.internal    Ready    <none>   3h14m   v1.33.5-eks-ecaa3a6   true                true
-ip-10-0-11-54.us-west-2.compute.internal    Ready    <none>   3h14m   v1.33.5-eks-ecaa3a6   true                true
-ip-10-0-7-157.us-west-2.compute.internal    Ready    <none>   3h14m   v1.33.5-eks-ecaa3a6
-ip-10-0-8-68.us-west-2.compute.internal     Ready    <none>   3h14m   v1.33.5-eks-ecaa3a6   true                true
-ip-10-0-8-81.us-west-2.compute.internal     Ready    <none>   3h14m   v1.33.5-eks-ecaa3a6   true                true
+ip-10-0-0-183.us-west-2.compute.internal    Ready    <none>   3h14m   v1.33.8-eks-f69f56f
+ip-10-0-10-107.us-west-2.compute.internal   Ready    <none>   3h14m   v1.33.8-eks-f69f56f   true                true
+ip-10-0-10-68.us-west-2.compute.internal    Ready    <none>   3h14m   v1.33.8-eks-f69f56f   true                true
+ip-10-0-11-31.us-west-2.compute.internal    Ready    <none>   3h14m   v1.33.8-eks-f69f56f   true                true
+ip-10-0-11-54.us-west-2.compute.internal    Ready    <none>   3h14m   v1.33.8-eks-f69f56f   true                true
+ip-10-0-7-157.us-west-2.compute.internal    Ready    <none>   3h14m   v1.33.8-eks-f69f56f
+ip-10-0-8-68.us-west-2.compute.internal     Ready    <none>   3h14m   v1.33.8-eks-f69f56f   true                true
+ip-10-0-8-81.us-west-2.compute.internal     Ready    <none>   3h14m   v1.33.8-eks-f69f56f   true                true
 ```
 
 ## 2. Install WEKA Operator (with embedded CSI)
 
-> **Working directory:** `manifests/core/`
+The [WEKA Operator](https://docs.weka.io/kubernetes/weka-operator-deployments)
+manages WEKA storage components via Kubernetes Custom Resources
+(WekaCluster, WekaClient). We'll install it with the
+[CSI plugin](https://docs.weka.io/appendices/weka-csi-plugin)
+enabled, which simplifies secret and StorageClass setup.
 
-The [WEKA Operator](https://docs.weka.io/kubernetes/weka-operator-deployments) automates deployment, scaling, and lifecycle management of a WEKA storage system inside a Kubernetes cluster. It introduces Kubernetes Custom Resources (e.g., WekaCluster and WekaClient) that let you declaratively provision and manage WEKA storage components in Kubernetes workloads.
+> **Note:** The CSI node and controller pods may restart several times
+> during initial deployment. This is expected — they start with the
+> operator but require WEKA client containers to be running before
+> they can serve mounts. They will stabilize once clients are active.
 
-In addition to the WEKA operator, we'll also install the [WEKA CSI plugin](https://docs.weka.io/appendices/weka-csi-plugin). It provides a CSI driver for Kubernetes that lets pods create and mount persistent volumes on WEKA storage. We could do this separately, but doing it here simplifies some of the steps (like secret creation and `StorageClass` definitions).
-
-To start, create a namespace for the operator:
+Create the namespace:
 
 ```bash
 kubectl create namespace weka-operator-system
@@ -244,9 +218,10 @@ Install the operator and CSI plugin:
 helm upgrade --install weka-operator \
   oci://quay.io/weka.io/helm/weka-operator \
   --namespace weka-operator-system \
-  --version v1.9.1 \
+  --version v1.11.0 \
   --set imagePullSecret=weka-quay-io-secret \
   --set csi.installationEnabled=true \
+  -f manifests/core/values-weka-operator.yaml \
   --wait
 ```
 
@@ -254,10 +229,10 @@ Output:
 
 ```bash
 Release "weka-operator" does not exist. Installing it now.
-Pulled: quay.io/weka.io/helm/weka-operator:v1.9.1
-Digest: sha256:065e6e8d3c7f3a9fcaf028e68feb65c67e822718947e5e848abb6a4370ab9e37
+Pulled: quay.io/weka.io/helm/weka-operator:v1.11.0
+Digest: sha256:646b7ab0f71b170ba8be24b44af08ae04f261034c66cbca451478211e614e854
 NAME: weka-operator
-LAST DEPLOYED: Wed Jan 28 09:06:43 2026
+LAST DEPLOYED: Mon Apr 13 09:05:43 2026
 NAMESPACE: weka-operator-system
 STATUS: deployed
 REVISION: 1
@@ -287,15 +262,18 @@ weka-operator-node-agent-lmg6k                      1/1     Running   0         
 
 ## 3. Cluster Resources
 
-Before we start deploying the WEKA cluster and clients, we need to plan what resources we allocate to the cluster. The storage cluster is composed of the following:
+Plan resource allocation before deploying. The WEKA storage
+cluster has three process types:
 
-* Compute processes: Handles filesystems, cluster-level functions, and IO from clients
-* Drive processes: Manages SSD drives and IO operations to the drives
-* Frontend (client) processes: Manages POSIX client access and coordinates IO operations with compute and drive processes
+* Compute processes: Handles filesystems, cluster-level
+  functions, and IO from clients
+* Drive processes: Manages SSD drives and IO operations to
+  the drives
+* Frontend (client) processes: Manages POSIX client access and
+  coordinates IO operations with compute and drive processes
 
-We need to allocate CPU cores and network devices to each of these processes. In a dedicated WEKA cluster we would normally define the cluster and client resources separately; however, because we are creating an Axon cluster, the node resources will be used by both the cluster processes and the application(s) that will use the WEKA storage cluster.
-
-For resource planning, we recommend:
+Each process needs a dedicated CPU core and ideally a dedicated
+ENI. Planning guidelines:
 
 * **1 drive process** per NVMe drive, up to 6 SSDs
   * Above 6 SSDs, use 1 drive process per 2 SSDs
@@ -307,98 +285,91 @@ For resource planning, we recommend:
   * 3.9 GB per compute process
   * 2 GB per drive process
 
-We also need to allocate network resources, and in AWS that means creating additional network interfaces (ENIs) and assigning them to WEKA processes. Ideally we would allocate 1 ENI per WEKA process; however, in the cloud we are typically limited by the number of available interfaces. And because we are deploying an Axon cluster in this example, we are further restricted on available network devices; we need to leave some ENIs available for the application to access the WEKA cluster via DPDK for performance. Keep in mind that for most production Axon deployments, users are typically using larger GPU instances (e.g., `p5.48xlarge` or `p6-b200.48xlarge`) which have a large number of available ENIs.
+In AWS, the ENI limit per instance constrains how many processes
+you can run. Account for 1 ENI for management and 1 for EKS VPC
+CNI. Production Axon deployments typically use larger GPU instances
+(p5, p6) which have more ENIs available.
 
-The Terraform config provided in this repo uses 6 of the `i3en.12xlarge` instances for the cluster nodes. You are welcome to use a different instance if you prefer, but for the purposes of our example we'll plan our WEKA resources using the specs of the `i3en.12xlarge` instance:
+### 3.1 Example: i3en.12xlarge
 
-* 48 vCPU
-* 384 GiB memory
-* 4 x 7500 GB NVMe
-* 50 Gbps network bandwidth (Maximum of **8 network interfaces**)
+| Resource | Value |
+| -------- | ----- |
+| vCPU | 48 (24 physical cores, 2 threads each) |
+| Memory | 384 GiB |
+| NVMe | 4 x 7500 GB |
+| Max ENIs | 8 |
 
-Given the number of available ENIs on the `i3en.12xlarge`, we will scale back the number of cores we assign to the compute and drive processes. We also need to account for:
+Per-node allocation:
 
-* 1 ENI for management (this is the default interface that is created when launching the instance)
-* 1 ENI used by EKS (part of the Amazon VPC CNI)
-* 1 ENI for use in the client application pod
+| Component | Cores | ENIs |
+| --------- | ----- | ---- |
+| Drive processes | 2 | 2 |
+| Compute processes | 2 | 2 |
+| Frontend/client | 1 | 1 |
+| Management + EKS | -- | 2 |
+| Application pod | 1 | 1 |
+| **Total** | **6** | **8** |
 
-So, for our example, we have the following, **per-node** resource requirements:
+Memory: ~16.8 GB for WEKA processes.
 
-* WEKA Cluster:
-  * 4 NVMe
-  * 2 cores + 2 ENIs for drive processes
-  * 2 cores + 2 ENIs for compute processes
-  * 1 core + 1 ENI for frontend/client process
-  * 2 ENIs for management and EKS
-  * 16.8 GB RAM
-* Application Pod:
-  * 1 core + 1 ENI for application (using DPDK)
+### 3.2 Hugepages
 
-### 3.1 Configure Huge Pages
+WEKA uses 2 MiB hugepages for all container processes. The node
+must have enough total hugepages to cover every container that
+will run on it. Each container's request includes a base
+allocation plus a DPDK memory component and an offset.
 
-WEKA uses hugepages for performance, and we need to allocate pages at the node level for each of the WEKA processes:
+**Per-container formulas** (from the operator source):
 
-The recommended hugepage memory sizing is:
+| Container | Hugepages (MiB) | Offset (MiB) |
+| --------- | --------------- | ------------ |
+| Drive | `1400 * driveCores + 200 * numDrives + 64 * driveCores` | `200 * numDrives + 64 * driveCores` |
+| Compute | `computeHugepages + 64 * computeCores` | `200 + 64 * computeCores` |
+| Client | `clientCores * (1500 + 64)` | `200 + 64 * clientCores` |
 
-* Compute core: **3 GiB** hugepages
-* Drive core: **1.5 GiB** hugepages
-* Frontend core: **1.5 GiB** hugepages
+Each pod requests `hugepages + offset` from the node pool.
 
-To calculate the required hugepages:
+**Example: i3en.12xlarge (2 compute cores, 2 drive cores,
+1 client core, numDrives=1)**
 
-1. Compute total GiB:
+| Container | Hugepages | Offset | Pod request |
+| --------- | --------- | ------ | ----------- |
+| Drive | 3128 | 328 | 3456 MiB |
+| Compute (6144 explicit) | 6272 | 328 | 6600 MiB |
+| Client | 1564 | 264 | 1828 MiB |
+| **Per-node total** | | | **11884 MiB** |
 
-   `GiB_total = 3*(compute_cores) + 1.5*(drive_cores) + 1.5*(frontend_cores)`
+Convert to pages: `11884 / 2 = 5942 pages`. Add headroom:
+**6144 pages** (12288 MiB).
 
-2. Convert GiB to number of **2MiB** hugepages:
+Set this in `terraform.tfvars`:
 
-   1 GiB = 1024 MiB, and each hugepage is 2 MiB → **512 hugepages per GiB**
-
-   `nr_hugepages = GiB_total * 512`
-
-**Example:**
-
-* 2 compute cores, 2 drive cores, 1 frontend core
-* GiB_total = 3\*2 + 1.5\*2 + 1.5\*1 = **10.5 GiB**  
-* nr_hugepages = 10.5*512 = **5376**
-
-Set this value in `manifests/core/hugepages-daemonset.yaml`:
-
-```yaml
-data:
-  HUGEPAGES_COUNT: "5376"
+```hcl
+hugepages_count = 6144
 ```
 
-Apply the DaemonSet:
+Hugepages are configured at node boot via the launch template
+user data.
 
-```bash
-kubectl apply -f hugepages-daemonset.yaml
-```
-
-Verify allocation:
+Verify allocation after nodes are running:
 
 ```bash
 kubectl get nodes -l weka.io/supports-backends=true \
   -o custom-columns=NAME:.metadata.name,HUGEPAGES:.status.allocatable.hugepages-2Mi
-
-NAME                                       HUGEPAGES
-ip-10-0-2-195.us-west-2.compute.internal   10752Mi
-ip-10-0-3-221.us-west-2.compute.internal   10752Mi
-ip-10-0-4-159.us-west-2.compute.internal   10752Mi
-ip-10-0-7-149.us-west-2.compute.internal   10752Mi
-ip-10-0-8-123.us-west-2.compute.internal   10752Mi
-ip-10-0-8-94.us-west-2.compute.internal    10752Mi
 ```
 
 ## 4. Configure NICs
 
-WEKA uses [DPDK](https://docs.weka.io/weka-system-overview/networking-in-wekaio) to bypass the kernel stack, resulting in high-performance, low-latency packet processing. This also means we need to allocate networking devices to individual cores and WEKA processes. DPDK is supported in AWS, but we need to create and attach additional network interfaces. The WEKA operator uses a policy to check for NICs and create them if necessary.
+WEKA uses [DPDK](https://docs.weka.io/weka-system-overview/networking-in-wekaio)
+for high-performance networking, which requires dedicated ENIs
+per WEKA process. The `ensure-nics` WekaPolicy creates and attaches
+additional ENIs to each node.
 
-We can use a `WekaPolicy` to handle creating additional ENIs and attaching them to the underlying EC2 instance. The operator will make these available at the node level for pods to use.
+`dataNICsNumber` is the total secondary NICs on the instance
+(WEKA data NICs + 1 for the EKS VPC CNI). For the `i3en.12xlarge`
+with 8 ENI max, we use all 7 secondary slots (6 for WEKA + 1 EKS).
 
-Based on our example instance type, `i3en.12xlarge`, and the resource planning we did earlier, we'll be using the maximum of 8 ENIs for this instance (6 for the WEKA cluster, 1 management, and 1 for the application pod). The instance has 1 network interface created by default, so we need to specify that 7 additional ENIs are created.
-
-An example policy is provided:
+Review `manifests/core/ensure-nics.yaml`:
 
 ```yaml
 apiVersion: weka.weka.io/v1alpha1
@@ -408,7 +379,7 @@ metadata:
   namespace: weka-operator-system
 spec:
   type: "ensure-nics"
-  image: "quay.io/weka.io/weka-in-container:4.4.10.200"
+  image: "quay.io/weka.io/weka-in-container:4.4.21.2"
   imagePullSecret: "weka-quay-io-secret"
   payload:
     ensureNICsPayload:
@@ -418,49 +389,13 @@ spec:
       dataNICsNumber: 7
 ```
 
-`dataNICsNumber` is the number of additional ENIs to attach beyond the primary ENI created at instance launch. For deploying in AWS, it's important that `spec.payload.type` is set to `aws`. Also, we need to make sure the `nodeSelector` parameter is set so that the ENIs will be created on the correct nodes.
-
 Apply the policy:
 
 ```bash
-kubectl apply -f ensure-nics.yaml
+kubectl apply -f manifests/core/ensure-nics.yaml
 ```
 
-We can check the output after a few minutes to see if the network interfaces have been created:
-
-```bash
-kubectl describe wekapolicy ensure-nics-policy -n weka-operator-system
-
-Name:         ensure-nics-policy
-Namespace:    weka-operator-system
-Labels:       <none>
-Annotations:  <none>
-API Version:  weka.weka.io/v1alpha1
-Kind:         WekaPolicy
-Metadata:
-  Creation Timestamp:  2026-02-04T21:24:33Z
-  Generation:          1
-  Resource Version:    351081
-  UID:                 e62c0b32-5855-4ca6-afd3-deee192e4d72
-Spec:
-  Image:              quay.io/weka.io/weka-in-container:4.4.10.200
-  Image Pull Secret:  weka-quay-io-secret
-  Payload:
-    Ensure Ni Cs Payload:
-      Data Ni Cs Number:  7
-      Node Selector:
-        weka.io/supports-backends:  true
-      Type:                         aws
-    Interval:                       5m
-  Type:                             ensure-nics
-Status:
-  Last Run Time:  2026-02-05T14:25:57Z
-  Result:         {"results":{"ip-10-0-2-195.us-west-2.compute.internal":{"err":null,"nics":[{"mac_address":"06:b7:0a:1e:a3:1b","primary_ip":"10.0.2.194","subnet_cidr_block":"10.0.0.0/22"},{"mac_address":"06:80:dd:ea:01:fb","primary_ip":"10.0.3.84","subnet_cidr_block":"10.0.0.0/22"},{"mac_address":"06:1d:ab:d1:d1:ed","primary_ip":"10.0.2.75","subnet_cidr_block":"10.0.0.0/22"},{"mac_address":"06:21:a6:eb:2e:1f","primary_ip":"10.0.2.24","subnet_cidr_block":"10.0.0.0/22"},{"mac_address":"06:74:2e:60:56:e7","primary_ip":"10.0.2.99","subnet_cidr_block":"10.0.0.0/22"},{"mac_address":"06:dc:d8:c0:8f:87","primary_ip":"10.0.0.15","subnet_cidr_block":"10.0.0.0/22"},{"mac_address":"06:61:e0:2a:8a:bd","primary_ip":"10.0.0.4","subnet_cidr_block":"10.0.0.0/22"}],"ensured":true},"ip-10-0-3-221.us-west-2.compute.internal":{"err":null,"nics":[{"mac_address":"06:7a:19:1a:bc:91","primary_ip":"10.0.1.64","subnet_cidr_block":"10.0.0.0/22"},{"mac_address":"06:c4:07:83:53:61","primary_ip":"10.0.2.66","subnet_cidr_block":"10.0.0.0/22"},{"mac_address":"06:e3:77:dc:ba:2f","primary_ip":"10.0.1.6","subnet_cidr_block":"10.0.0.0/22"},{"mac_address":"06:9f:cb:62:d7:bf","primary_ip":"10.0.2.40","subnet_cidr_block":"10.0.0.0/22"},{"mac_address":"06:d0:7e:bb:36:9f","primary_ip":"10.0.3.7","subnet_cidr_block":"10.0.0.0/22"},{"mac_address":"06:11:b6:b6:e3:83","primary_ip":"10.0.2.237","subnet_cidr_block":"10.0.0.0/22"},{"mac_address":"06:86:61:61:73:3d","primary_ip":"10.0.2.74","subnet_cidr_block":"10.0.0.0/22"}],"ensured":true},"ip-10-0-4-159.us-west-2.compute.internal":{"err":null,"nics":[{"mac_address":"02:d3:87:ab:5f:21","primary_ip":"10.0.5.2","subnet_cidr_block":"10.0.4.0/22"},{"mac_address":"02:b9:c0:10:0c:39","primary_ip":"10.0.7.186","subnet_cidr_block":"10.0.4.0/22"},{"mac_address":"02:55:79:8d:de:a9","primary_ip":"10.0.4.218","subnet_cidr_block":"10.0.4.0/22"},{"mac_address":"02:ea:7d:a6:03:b1","primary_ip":"10.0.5.113","subnet_cidr_block":"10.0.4.0/22"},{"mac_address":"02:15:8e:ef:59:7d","primary_ip":"10.0.6.28","subnet_cidr_block":"10.0.4.0/22"},{"mac_address":"02:b5:12:ca:fb:1d","primary_ip":"10.0.6.6","subnet_cidr_block":"10.0.4.0/22"},{"mac_address":"02:20:86:55:3c:11","primary_ip":"10.0.6.67","subnet_cidr_block":"10.0.4.0/22"}],"ensured":true},"ip-10-0-7-149.us-west-2.compute.internal":{"err":null,"nics":[{"mac_address":"02:dc:ca:0f:fc:eb","primary_ip":"10.0.6.130","subnet_cidr_block":"10.0.4.0/22"},{"mac_address":"02:fd:8a:0a:7c:43","primary_ip":"10.0.4.128","subnet_cidr_block":"10.0.4.0/22"},{"mac_address":"02:e8:e2:2c:48:b5","primary_ip":"10.0.5.101","subnet_cidr_block":"10.0.4.0/22"},{"mac_address":"02:5c:5c:40:07:07","primary_ip":"10.0.7.124","subnet_cidr_block":"10.0.4.0/22"},{"mac_address":"02:7e:20:c6:f7:19","primary_ip":"10.0.6.59","subnet_cidr_block":"10.0.4.0/22"},{"mac_address":"02:1c:6f:2d:0e:75","primary_ip":"10.0.6.68","subnet_cidr_block":"10.0.4.0/22"},{"mac_address":"02:2c:3e:a0:d6:f9","primary_ip":"10.0.6.110","subnet_cidr_block":"10.0.4.0/22"}],"ensured":true},"ip-10-0-8-123.us-west-2.compute.internal":{"err":null,"nics":[{"mac_address":"0a:6a:04:68:c7:d7","primary_ip":"10.0.8.128","subnet_cidr_block":"10.0.8.0/22"},{"mac_address":"0a:74:ce:74:37:95","primary_ip":"10.0.9.231","subnet_cidr_block":"10.0.8.0/22"},{"mac_address":"0a:82:d4:38:0a:31","primary_ip":"10.0.8.116","subnet_cidr_block":"10.0.8.0/22"},{"mac_address":"0a:7a:b3:9b:fb:23","primary_ip":"10.0.9.68","subnet_cidr_block":"10.0.8.0/22"},{"mac_address":"0a:6b:6e:49:9a:e7","primary_ip":"10.0.11.44","subnet_cidr_block":"10.0.8.0/22"},{"mac_address":"0a:d8:78:e6:ef:55","primary_ip":"10.0.10.47","subnet_cidr_block":"10.0.8.0/22"},{"mac_address":"0a:31:2c:f4:fb:55","primary_ip":"10.0.9.18","subnet_cidr_block":"10.0.8.0/22"}],"ensured":true},"ip-10-0-8-94.us-west-2.compute.internal":{"err":null,"nics":[{"mac_address":"0a:c4:6c:cc:74:0f","primary_ip":"10.0.9.1","subnet_cidr_block":"10.0.8.0/22"},{"mac_address":"0a:85:e3:f6:d7:37","primary_ip":"10.0.11.61","subnet_cidr_block":"10.0.8.0/22"},{"mac_address":"0a:e5:c9:9c:bf:49","primary_ip":"10.0.8.55","subnet_cidr_block":"10.0.8.0/22"},{"mac_address":"0a:4f:67:51:b3:af","primary_ip":"10.0.10.122","subnet_cidr_block":"10.0.8.0/22"},{"mac_address":"0a:59:9d:47:a7:df","primary_ip":"10.0.8.195","subnet_cidr_block":"10.0.8.0/22"},{"mac_address":"0a:ce:fb:eb:98:87","primary_ip":"10.0.8.74","subnet_cidr_block":"10.0.8.0/22"},{"mac_address":"0a:3f:b3:ff:d7:d1","primary_ip":"10.0.11.11","subnet_cidr_block":"10.0.8.0/22"}],"ensured":true}}}
-  Status:         Done
-Events:           <none>
-```
-
-If you want to simplify the output a bit and check each node:
+Check the status after a few minutes:
 
 ```bash
 kubectl get wekapolicy ensure-nics-policy -n weka-operator-system -o json \
@@ -479,21 +414,18 @@ ip-10-0-8-123.us-west-2.compute.internal ensured=true nics=7 err=null
 ip-10-0-8-94.us-west-2.compute.internal ensured=true nics=7 err=null
 ```
 
-Note that this will run every 5 minutes and check if there are nodes that need additional NICs created.
+This runs every 5 minutes and checks for nodes that need
+additional NICs.
 
 ## 5. Prepare Drives
 
-Local NVMe drives must be discovered and signed before they can be used by WEKA.
+Local NVMe drives must be discovered and signed before WEKA can
+use them. The `sign-drives` WekaPolicy handles this automatically.
 
-This guide uses an automated `WekaPolicy` to:
+For manual drive selection (e.g. only a subset of NVMe drives),
+see the [WEKA documentation](https://docs.weka.io/kubernetes/weka-operator-deployments#id-5.-discover-drives-for-weka-cluster-provisioning).
 
-* Discover eligible drives
-* Assign unique IDs
-* Make them available to the cluster
-
-It's also possible to do to this process manually with `WekaManualOperation`. This can be useful for certain situations such only allocating a portion of the local NVMe drives to WEKA. For more information, see the [WEKA documentation](https://docs.weka.io/kubernetes/weka-operator-deployments#id-5.-discover-drives-for-weka-cluster-provisioning).
-
-An example policy is provided:
+Review `manifests/core/sign-drives.yaml`:
 
 ```yaml
 apiVersion: weka.weka.io/v1alpha1
@@ -512,13 +444,13 @@ spec:
 
 The main options to note here are
 
-* `type`: We need to ensure this is set to `aws-all` for this deployment
-* `nodeSelector`: Ensure this runs only on nodes that will be used for the WEKA storage cluster
+* `type`: set to `aws-all` for AWS deployments
+* `nodeSelector`: target only WEKA storage nodes
 
 Apply the policy:
 
 ```bash
-kubectl apply -f sign-drives.yaml
+kubectl apply -f manifests/core/sign-drives.yaml
 ```
 
 We can check the status of the policy:
@@ -530,54 +462,31 @@ NAME                 TYPE          STATUS   PROGRESS
 sign-drives-policy   sign-drives   Done
 ```
 
-And for more detail:
-
-```bash
-kubectl describe wekapolicy sign-drives-policy -n weka-operator-system
-
-Name:         sign-drives-policy
-Namespace:    weka-operator-system
-Labels:       <none>
-Annotations:  <none>
-API Version:  weka.weka.io/v1alpha1
-Kind:         WekaPolicy
-Metadata:
-  Creation Timestamp:  2026-02-04T21:28:12Z
-  Generation:          1
-  Resource Version:    355924
-  UID:                 0d2c65bf-c1b5-47ad-a2b8-b39befe245aa
-Spec:
-  Payload:
-    Interval:  5m
-    Sign Drives Payload:
-      Node Selector:
-        weka.io/supports-backends:  true
-      Type:                         aws-all
-  Type:                             sign-drives
-Status:
-  Last Run Time:  2026-02-05T14:40:48Z
-  Result:         {"message":"No new drives signed"}
-  Status:         Done
-Events:           <none>
-```
+Wait until STATUS shows `Done`.
 
 ## 6. Deploy WEKA Cluster
 
-The `WekaCluster` custom resource defines the WEKA backend (drive + compute containers) and how it is scheduled onto Axon nodes.
-At minimum, review the following fields in weka-cluster.yaml:
+The `WekaCluster` CR defines the WEKA backend (drive + compute
+containers). Review `manifests/core/weka-cluster.yaml` and adjust
+based on resource planning from section 3:
 
 * `spec.dynamicTemplate`
-  * `computeContainers`: Number of compute containers for the entire cluster (maximum 1 per node)
-  * `computeCores`: Number of cores per compute container
-  * `driveContainers`: Number of drive containers (maximum 1 per node)
-  * `driveCores`: Number of cores per drive container
-  * Using our example from the `hugepages` configuration section, we would have 3 `computeContainers` and 8 `driveContainers`
-* `spec.nodeSelector`: The example manifest sets `weka.io/supports-backends: true` to ensure only specific nodes are used for the WekaCluster deployment
-* `spec.rawTolerations`: The example manifest sets a taint, `weka.io/axon=true:NoSchedule`, so backend pods can be scheduled
-* `spec.image` and `spec.imagePullSecret`: Make sure to set the correct image and version, and the secret storing the quay.io credentials
-* `spec.network`: We set `udpMode: false` to make use of dedicated ENIs for performance
+  * `computeContainers`: total compute containers in the cluster (max 1 per node)
+  * `computeCores`: cores per compute container
+  * `computeHugepages`: hugepages per compute container (MiB).
+    Required with operator v1.11.0. Formula: `computeCores * 3072`
+  * `driveContainers`: total drive containers (max 1 per node)
+  * `driveCores`: cores per drive container
+  * `numDrives`: drives per drive container. Required with operator
+    v1.11.0 (set to `1` for full-drives mode)
+* `spec.nodeSelector`: targets `weka.io/supports-backends: true`
+* `spec.rawTolerations`: `weka.io/axon=true:NoSchedule` so backend
+  pods can schedule on tainted nodes
+* `spec.image` and `spec.imagePullSecret`: WEKA version and quay.io
+  pull secret
+* `spec.network.udpMode: false`: use DPDK with dedicated ENIs
 
-Based on our instance type `i3en.12xlarge` and the resource planning from earlier, here's an example `WekaCluster`:
+Example for `i3en.12xlarge`:
 
 ```yaml
 apiVersion: weka.weka.io/v1alpha1
@@ -590,9 +499,11 @@ spec:
   dynamicTemplate:
     computeContainers: 6
     computeCores: 2
+    computeHugepages: 6144
     driveContainers: 6
     driveCores: 2
-  image: quay.io/weka.io/weka-in-container:4.4.10.200
+    numDrives: 1
+  image: quay.io/weka.io/weka-in-container:4.4.21.2
   imagePullSecret: "weka-quay-io-secret"
   nodeSelector:
     weka.io/supports-backends: "true"
@@ -612,7 +523,7 @@ spec:
 Apply the WekaCluster manifest:
 
 ```bash
-kubectl apply -f weka-cluster.yaml
+kubectl apply -f manifests/core/weka-cluster.yaml
 ```
 
 Verify the WEKA cluster is created:
@@ -645,7 +556,9 @@ weka-axon-eks-cluster-drive-da653d8e-c4d5-4a6b-9628-39d18aed4102     1/1     Run
 
 ## 7. Deploy WEKA Client
 
-The other custom resource we need to deploy is the `WekaClient`. This is equivalent to the front-end processes we would normally create in a dedicated WEKA cluster. As we are creating an Axon cluster, we will deploy the `WekaClient` to the same nodes as the `WekaCluster` CR. Here's an example manifest:
+The `WekaClient` CR creates frontend processes that provide POSIX
+access to the cluster. In an Axon deployment, clients run on the
+same nodes as the backend. Review `manifests/core/weka-client.yaml`:
 
 ```yaml
 apiVersion: weka.weka.io/v1alpha1
@@ -659,7 +572,7 @@ spec:
   cpuPolicy: dedicated
   cpuRequest: "500m"
   driversDistService: https://drivers.weka.io
-  image: quay.io/weka.io/weka-in-container:4.4.10.200
+  image: quay.io/weka.io/weka-in-container:4.4.21.2
   imagePullSecret: "weka-quay-io-secret"
   network: {}
   nodeSelector:
@@ -680,27 +593,16 @@ spec:
   wekaHomeConfig: {}
 ```
 
-The main parameters to check are:
+Key fields:
 
-* `spec.coresNum`: Number of cores to allocate to the client process
-* `spec.targetCluster`: Name and namespace of an existing `WekaCluster`
+* `spec.coresNum`: cores for the client process
+* `spec.targetCluster`: points to the local WekaCluster
+* `spec.rawTolerations`: allows scheduling on tainted axon nodes
 
-We also add the tolerations:
-
-```yaml
-rawTolerations:
-    - key: "weka.io/axon"
-      operator: "Equal"
-      value: "true"
-      effect: "NoSchedule"
-```
-
-to allow the `WekaClient` CR to be deployed to the same nodes as the `WekaCluster` CR.
-
-Apply the WekaClient manifest:
+Apply:
 
 ```bash
-kubectl apply -f weka-client.yaml
+kubectl apply -f manifests/core/weka-client.yaml
 ```
 
 Verify the client has deployed:
@@ -716,7 +618,8 @@ weka-axon-eks-client   Running   weka-axon-eks-cluster   1       6/6/6
 
 ### Client verification
 
-We can check that WEKA is running by executing `weka local ps` on one of the pods. First get a list of the client pods:
+Verify WEKA is running by executing `weka local ps` on a
+client pod:
 
 ```bash
 kubectl get pods -n weka-operator-system -o wide | grep -i client
@@ -736,7 +639,7 @@ kubectl exec -n weka-operator-system weka-axon-eks-client-ip-10-0-2-195.us-west-
   bash -lc 'weka local ps'
 
 CONTAINER           STATE    DISABLED  UPTIME    MONITORING  PERSISTENT   PORT  PID  STATUS  VERSION     LAST FAILURE
-3dec9945aea2client  Running  True      0:04:32h  True        True        46001  822  Ready   4.4.10.200
+3dec9945aea2client  Running  True      0:04:32h  True        True        46001  822  Ready   4.4.21.2
 ```
 
 ### 8.1 Access WEKA Web UI
@@ -763,7 +666,7 @@ Access locally in a web browser at:
 http://localhost:15305
 ```
 
-You also need to retrieve the WEKA admin credentials (created automatically by the operator):
+Retrieve the admin credentials (created by the operator):
 
 ```bash
 kubectl get secret -n weka-operator-system weka-cluster-weka-axon-eks-cluster \
@@ -777,102 +680,42 @@ Once logged in you should see the cluster:
 
 ![WEKA Axon UI](../img/weka-axon/weka-axon-ui.png)
 
-## 9. CSI Components
+## 9. CSI and StorageClass
 
-When the WEKA CSI plugin is installed, it provisions volumes using Kubernetes StorageClass objects. A StorageClass tells CSI what type of WEKA volume to create (directory/snapshot/filesystem-backed), which WEKA filesystem to use, and which credentials secret to use for API operations.
-
-The WEKA operator we deployed earlier automatically created:
-
-* CSI controller Deployment
-* CSI node DaemonSet
-* CSI API secret
-* Default StorageClasses
-
-We'll walk through creating another StorageClass, a PVC to access it, and a test pod to show how an application could access our WEKA Axon cluster.
-
-### 9.1 API Secret
-
-The WEKA CSI plugin uses an API-based communication model, where cluster endpoints + credentials are stored in a Kubernetes Secret referenced by the StorageClass. Because we had the WEKA operator handle the CSI plugin installation earlier, the API secret has already been created:
+Because we installed the operator with `csi.installationEnabled=true`,
+the CSI plugin, API secret, and default StorageClasses were created
+automatically. You can verify:
 
 ```bash
-kubectl get secrets -n weka-operator-system | grep -i csi 
-
-weka-csi-weka-axon-eks-cluster                       Opaque                           5      9h
+kubectl get secrets -n weka-operator-system | grep csi
 ```
 
-We can inspect the contents of the secret:
+```text
+weka-csi-weka-axon-eks-cluster   Opaque   5   ...
+```
 
 ```bash
-kubectl get secret -n weka-operator-system  weka-csi-weka-axon-eks-cluster  -o yaml
-
-apiVersion: v1
-data:
-  endpoints: MTAuMC44Ljk0OjE1MTAwLDEwLjAuNy4xNDk6MTUwMDAsMTAuMC44LjEyMzoxNTEwMCwxMC4wLjIuMTk1OjE1MDAwLDEwLjAuNC4xNTk6MTUwMDAsMTAuMC44Ljk0OjE1MDAwLDEwLjAuNy4xNDk6MTUxMDAsMTAuMC4zLjIyMToxNTAwMCwxMC4wLjMuMjIxOjE1MTAwLDEwLjAuOC4xMjM6MTUwMDAsMTAuMC40LjE1OToxNTEwMCwxMC4wLjIuMTk1OjE1MTAw
-  organization: Um9vdA==
-  password: <redacted>
-  scheme: aHR0cHM=
-  username: d2VrYWNzaWM0YzJmYWI5NjVjMA==
-kind: Secret
-metadata:
-  creationTimestamp: "2026-02-04T21:40:29Z"
-  name: weka-csi-weka-axon-eks-cluster
-  namespace: weka-operator-system
-  ownerReferences:
-  - apiVersion: weka.weka.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: WekaCluster
-    name: weka-axon-eks-cluster
-    uid: 95113f32-9a00-42a3-a451-c4c2fab965c0
-  resourceVersion: "293077"
-  uid: e8587dec-b3f1-4ac5-8768-02b125d1d3a9
-type: Opaque
+kubectl get storageclass | grep weka
 ```
 
-Note that the `data` values are base64-encoded:
+```text
+weka-weka-axon-eks-cluster-weka-operator-system-default               ...   Delete   Immediate   true   ...
+weka-weka-axon-eks-cluster-weka-operator-system-default-forcedirect   ...   Delete   Immediate   true   ...
+```
+
+The API secret values are base64-encoded. To decode and inspect:
 
 ```bash
 kubectl get secret -n weka-operator-system weka-csi-weka-axon-eks-cluster \
-  -o jsonpath='{.data.username}' | base64 --decode; echo
-
-wekacsic4c2fab965c0
+  -o json | jq -r '.data | to_entries[] | "\(.key): \(.value | @base64d)"'
 ```
 
-This is important, as you would need to ensure you correctly encode data values if you want to create your CSI secret (we'll stick with the one automatically created here for simplicity).
+If you need to create a custom CSI secret (e.g. for a different
+cluster), all `data` values must be base64-encoded. Incorrect encoding
+is a common source of CSI errors.
 
-### 9.2 StorageClasses
-
-> **Working directory:** `manifests/test/`
-
-When the CSI plugin is enabled, the WEKA operator creates one or more StorageClasses that point to the WEKA cluster via a CSI secret.
-
-List StorageClasses:
-
-```bash
-kubectl get storageclass | grep -i weka
-
-weka-weka-axon-eks-cluster-weka-operator-system-default               weka-axon-eks-cluster.weka-operator-system.weka.io   Delete          Immediate              true                   13h
-weka-weka-axon-eks-cluster-weka-operator-system-default-forcedirect   weka-axon-eks-cluster.weka-operator-system.weka.io   Delete          Immediate              true                   13h
-```
-
-We can inspect one of the StorageClasses:
-
-```bash
-kubectl describe storageclass weka-weka-axon-eks-cluster-weka-operator-system-default
-
-Name:                  weka-weka-axon-eks-cluster-weka-operator-system-default
-IsDefaultClass:        No
-Annotations:           <none>
-Provisioner:           weka-axon-eks-cluster.weka-operator-system.weka.io
-Parameters:            capacityEnforcement=HARD,csi.storage.k8s.io/controller-expand-secret-name=weka-csi-weka-axon-eks-cluster,csi.storage.k8s.io/controller-expand-secret-namespace=weka-operator-system,csi.storage.k8s.io/controller-publish-secret-name=weka-csi-weka-axon-eks-cluster,csi.storage.k8s.io/controller-publish-secret-namespace=weka-operator-system,csi.storage.k8s.io/node-publish-secret-name=weka-csi-weka-axon-eks-cluster,csi.storage.k8s.io/node-publish-secret-namespace=weka-operator-system,csi.storage.k8s.io/node-stage-secret-name=weka-csi-weka-axon-eks-cluster,csi.storage.k8s.io/node-stage-secret-namespace=weka-operator-system,csi.storage.k8s.io/provisioner-secret-name=weka-csi-weka-axon-eks-cluster,csi.storage.k8s.io/provisioner-secret-namespace=weka-operator-system,filesystemName=default,mountOptions=,volumeType=dir/v1
-AllowVolumeExpansion:  True
-MountOptions:          <none>
-ReclaimPolicy:         Delete
-VolumeBindingMode:     Immediate
-Events:                <none>
-```
-
-Now we'll create a StorageClass. An example config is provided in the repo:
+We'll create an additional StorageClass with `WaitForFirstConsumer`
+binding mode. Review `manifests/core/storageclass-weka.yaml`:
 
 ```yaml
 apiVersion: storage.k8s.io/v1
@@ -899,19 +742,22 @@ parameters:
   csi.storage.k8s.io/node-publish-secret-namespace: *secretNamespace
 ```
 
-Our StorageClass has the following properties:
+Key settings:
 
-* It's of type `dir/v1`, so it's a directory-backed StorageClass, and it's using the `default` filesystem
-* We're using the provisioner `weka-axon-eks-cluster.weka-operator-system.weka.io` that comes with the WEKA operator
-* `volumeBindingMode` is `WaitForFirstConsumer` means that PVC provisioning is delayed until a pod using the PVC is created
-* When the PVC is deleted, so is the persistent volume (`reclaimPolicy: Delete`)
+* `dir/v1` volume type on the `default` filesystem
+* `WaitForFirstConsumer` delays provisioning until a pod
+  uses the PVC
+* `reclaimPolicy: Delete` removes the volume when the PVC
+  is deleted
 
-You're welcome to set other parameters (see [WEKA documentation](https://docs.weka.io/appendices/weka-csi-plugin/storage-class-configurations)), but it's important to ensure you're using the correct `provisioner-secret-name` and `provisioner-secret-namespace`.
+See the [WEKA CSI documentation](https://docs.weka.io/appendices/weka-csi-plugin/storage-class-configurations)
+for other parameters. Make sure `provisioner-secret-name` and
+`provisioner-secret-namespace` match your CSI secret.
 
 Create the StorageClass:
 
 ```bash
-kubectl apply -f storageclass-weka.yaml
+kubectl apply -f manifests/core/storageclass-weka.yaml
 ```
 
 You should now see it in the list of other StorageClasses:
@@ -926,7 +772,7 @@ weka-weka-axon-eks-cluster-weka-operator-system-default               weka-axon-
 weka-weka-axon-eks-cluster-weka-operator-system-default-forcedirect   weka-axon-eks-cluster.weka-operator-system.weka.io   Delete          Immediate              true                   14h
 ```
 
-We'll now use the StorageClass to create a PVC and add it to a test application pod.
+Now create a PVC and test pod using this StorageClass.
 
 ### 9.3 Create Test PVC
 
@@ -954,12 +800,13 @@ spec:
       storage: 10Gi
 ```
 
-We're going to be creating this PVC in the `weka-axon-test` namespace, multiple nodes can mount the volume (`ReadWriteMany`), and it's `10Gi` in size.
+This creates a 10 GiB `ReadWriteMany` PVC in the
+`weka-axon-test` namespace.
 
 Apply:
 
 ```bash
-kubectl apply -f pvc.yaml
+kubectl apply -f manifests/test/pvc.yaml
 ```
 
 And check that it was created:
@@ -971,11 +818,12 @@ NAME             STATUS    VOLUME   CAPACITY   ACCESS MODES   STORAGECLASS      
 pvc-wekafs-dir   Pending                                      storageclass-wekafs-dir-api   <unset>                 19s
 ```
 
-The status is **PENDING** as we specified a binding mode of `WaitForFirstConsumer` in the StorageClass definition. It will be created once we deploy an application pod that references the PVC.
+Status is **PENDING** because of `WaitForFirstConsumer`. It will
+bind once a pod references the PVC.
 
 ## 10. Create Test Pod
 
-Below is an example pod that uses the PVC we created and mounts it onto `/data` in a container, and then writes some data:
+Deploy a pod that mounts the PVC and writes test data:
 
 ```yaml
 apiVersion: v1
@@ -993,10 +841,10 @@ spec:
       effect: "NoSchedule"
   containers:
     - name: test
-      image: busybox:1.36
+      image: busybox:1.37.0
       command:
         - sh
-        - -lc
+        - -c
         - |
           echo "hello from WEKA CSI" > /data/hello.txt
           ls -la /data
@@ -1014,7 +862,7 @@ spec:
 Deploy the application pod:
 
 ```bash
-kubectl apply -f weka-app.yaml
+kubectl apply -f manifests/test/weka-app.yaml
 ```
 
 You can check that application ran:
@@ -1038,7 +886,8 @@ NAME             STATUS   VOLUME                                     CAPACITY   
 pvc-wekafs-dir   Bound    pvc-7fc58fbf-5156-4f6f-9b4a-4d7775f8a73e   10Gi       RWX            storageclass-wekafs-dir-api   <unset>                 9m36s
 ```
 
-We can also check that this data is persistent on the WEKA filesystem. Below is an example pod that will use the same PVC to read the data written by our application pod:
+Verify persistence by deploying a second pod that reads the
+same PVC from a different node:
 
 ```yaml
 apiVersion: v1
@@ -1056,10 +905,10 @@ spec:
       effect: "NoSchedule"
   containers:
     - name: reader
-      image: busybox:1.36
+      image: busybox:1.37.0
       command:
         - sh
-        - -lc
+        - -c
         - |
           set -eux
           echo "Reading data written by another pod:"
@@ -1077,7 +926,7 @@ spec:
 Deploy the pod:
 
 ```bash
-kubectl apply -f weka-app-reader.yaml
+kubectl apply -f manifests/test/weka-app-reader.yaml
 ```
 
 and verify both application pods are running:
@@ -1102,15 +951,55 @@ hello from WEKA CSI
 + sleep 3600
 ```
 
-## 11. Cleanup
+---
 
-Once you're done, you can remove some or all of the components
+## Automated Deployment
+
+The `deploy.sh` script automates the full deployment: operator
+install, ensure-nics, sign-drives, WekaCluster, WekaClient,
+StorageClass, and a test pod. It waits for each step to
+complete before proceeding.
+
+```bash
+./deploy.sh <cluster-name> <quay-username> <quay-password>
+```
+
+Arguments can also be passed as environment variables:
+
+| Variable | Description |
+| ---------- | ------------- |
+| `CLUSTER_NAME` | EKS cluster name |
+| `QUAY_USERNAME` | Quay.io username |
+| `QUAY_PASSWORD` | Quay.io password |
+| `WEKA_OPERATOR_VERSION` | Operator chart version (default: `v1.11.0`) |
+
+To remove everything:
+
+```bash
+./deploy.sh --cleanup <cluster-name>
+```
+
+Run `./deploy.sh --help` for all options.
+
+---
+
+## Cleanup
+
+### Remove WEKA Components
 
 ```bash
 kubectl delete namespace weka-axon-test
 kubectl delete storageclass storageclass-wekafs-dir-api
 kubectl delete wekaclient -n weka-operator-system --all
 kubectl delete wekacluster -n weka-operator-system --all
+kubectl delete wekapolicy -n weka-operator-system --all
 helm uninstall weka-operator -n weka-operator-system
-cd ../../terraform && terraform destroy
+kubectl delete namespace weka-operator-system
+```
+
+### Destroy Infrastructure
+
+```bash
+# From the module root (weka-axon/)
+(cd terraform && terraform destroy)
 ```
