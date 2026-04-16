@@ -78,6 +78,7 @@ variable "node_groups" {
     desired_size              = number
     min_size                  = number
     max_size                  = number
+    subnet_ids                = optional(list(string), null)
     disk_size                 = optional(number, 100)
     ami_type                  = optional(string, "AL2023_x86_64_STANDARD")
     capacity_type             = optional(string, "ON_DEMAND")

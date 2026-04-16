@@ -35,6 +35,7 @@ module "eks" {
       desired_size              = 2
       min_size                  = 1
       max_size                  = 4
+      subnet_ids                = ["subnet-xxx"] # Same AZ as WEKA backend
       imds_hop_limit_2          = true
       enable_cpu_manager_static = true
       hugepages_count           = 2048
@@ -171,6 +172,7 @@ node group with an optional launch template (auto-created when needed).
 
 | Attribute | Type | Default | Description |
 | ----------- | ------ | --------- | ------------- |
+| `subnet_ids` | list(string) | `null` | Override subnets for this group (defaults to cluster subnets) |
 | `disk_size` | number | `100` | Root volume (GiB) |
 | `ami_type` | string | `"AL2023_x86_64_STANDARD"` | EKS AMI type |
 | `capacity_type` | string | `"ON_DEMAND"` | `ON_DEMAND` or `SPOT` |
@@ -190,6 +192,7 @@ are set.
 
 **For WEKA client nodes (dedicated mode):**
 
+- `subnet_ids` to the WEKA backend subnet (same AZ / placement group)
 - `imds_hop_limit_2 = true` (required for ENI management)
 - `enable_cpu_manager_static = true` (DPDK CPU allocation)
 - `hugepages_count` (~768 pages per WEKA core)
