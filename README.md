@@ -42,10 +42,13 @@ Each module is a standalone deployment; you can create a fully
 working WEKA + EKS cluster using the Terraform and other
 code/instructions in each section.
 
+Shared Terraform modules (e.g., [EKS](modules/eks/)) live in
+[modules/](modules/) and are referenced by each deployment model.
+
 ### Prerequisites
 
 * AWS CLI configured
-* Terraform >= 1.6
+* Terraform >= 1.5
 * kubectl, Helm 3.x
 * WEKA download token from [get.weka.io](https://get.weka.io)
 * Quay.io credentials for WEKA images
