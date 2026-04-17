@@ -6,12 +6,6 @@ variable "region" {
   type        = string
 }
 
-variable "tags_map" {
-  description = "Tags to apply to all resources"
-  type        = map(string)
-  default     = {}
-}
-
 # -----------------------------------------------------------------------------
 # Cluster
 # -----------------------------------------------------------------------------
@@ -183,4 +177,13 @@ variable "event_iam_role_arn" {
   description = "ARN of existing IAM role for CloudWatch Events"
   type        = string
   default     = null
+}
+
+# -----------------------------------------------------------------------------
+# Tags
+# -----------------------------------------------------------------------------
+variable "tags_map" {
+  description = "Tags to apply to all resources"
+  type        = map(string)
+  default     = {}
 }

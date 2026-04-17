@@ -100,7 +100,7 @@ module "weka_backend" {
 terraform output -json weka_deployment_output | jq -r '.sg_ids[]'
 
 # Secrets Manager ARN for WEKA admin password
-terraform output -json weka_deployment_output | jq -r '.weka_deployment_password_secret_id'
+terraform output -json weka_deployment_output | jq -r '.cluster_helper_commands.get_password'
 ```
 
 ## Additional Options

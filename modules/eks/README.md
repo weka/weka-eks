@@ -1,7 +1,7 @@
 # Shared EKS Module
 
 Deploys an EKS cluster with configurable node groups, optional launch
-templates, and IRSA for the WEKA operator. Used by all deployment models.
+templates. Used by all deployment models.
 
 ## Usage
 
@@ -217,17 +217,6 @@ are set.
 | `cluster_dns_ip` | string | `null` | Custom cluster DNS IP for kubelet |
 | `create_weka_nodes_security_group` | bool | `false` | Self-referencing SG for WEKA intra-node traffic (axon mode) |
 
-### WEKA Operator IRSA
-
-| Variable | Type | Default | Description |
-| ---------- | ------ | --------- | ------------- |
-| `enable_weka_operator_irsa` | bool | `true` | Create IRSA role for operator ENI management |
-| `weka_operator_namespace` | string | `"weka-operator-system"` | Operator service account namespace |
-| `weka_operator_service_account` | string | `"weka-operator-controller-manager"` | Operator service account name |
-| `enforce_eni_tag_conditions` | bool | `false` | Restrict ENI ops to tagged resources |
-| `eni_tag_key` | string | `"weka.io/cluster"` | Tag key for ENI restrictions |
-| `eni_tag_value` | string | `null` | Tag value (defaults to `cluster_name`) |
-
 ## Outputs
 
 | Output | Description |
@@ -241,11 +230,8 @@ are set.
 | `cluster_security_group_id` | AWS-managed cluster SG |
 | `node_iam_role_arn` | Node IAM role ARN |
 | `node_iam_role_name` | Node IAM role name |
-| `oidc_provider_arn` | OIDC provider ARN (for IRSA) |
-| `oidc_provider_url` | OIDC provider URL |
 | `node_groups` | Node group details (id, arn, status) |
 | `weka_nodes_security_group_id` | WEKA intra-node SG (null if not created) |
-| `weka_operator_irsa_role_arn` | Operator IRSA role ARN (null if not enabled) |
 | `configure_kubectl` | kubectl configuration command |
 
 ## Launch Templates
@@ -271,4 +257,3 @@ The nodeadm user data template configures (when applicable):
 | --------- | ------- |
 | terraform | >= 1.5  |
 | aws       | ~> 6.0  |
-| tls       | ~> 4.0  |

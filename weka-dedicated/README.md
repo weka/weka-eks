@@ -18,7 +18,7 @@ a standalone WEKA backend storage cluster.
 ## Prerequisites
 
 - AWS CLI configured with appropriate permissions
-- Terraform >= 1.6
+- Terraform >= 1.5
 - kubectl, Helm 3.x
 - WEKA download token from [get.weka.io](https://get.weka.io)
 - Quay.io credentials for WEKA container images (available at
@@ -37,6 +37,51 @@ weka-dedicated/
 ├── generate-manifests.sh # Generate weka-client.yaml and CSI secret from backend
 └── deploy.sh            # Automated deployment script
 ```
+
+---
+
+## Automated Deployment
+
+Once the Terraform modules are applied, `deploy.sh` handles
+everything else: manifest generation, operator install, ensure-nics,
+WekaClient, CSI plugin, StorageClass, and a test pod.
+
+If you'd rather walk through each step by hand, skip to
+[Manual Deployment](#manual-deployment).
+
+```bash
+./deploy.sh \
+  --cluster-name my-eks-cluster \
+  --quay-username myuser \
+  --quay-password mypass \
+  --backend-name eks-storage-cluster \
+  --secret-arn arn:aws:secretsmanager:eu-west-1:123456:secret:weka/...
+```
+
+When `--backend-name` and `--secret-arn` are provided, the script
+runs `generate-manifests.sh` internally to produce `weka-client.yaml`
+and `csi-wekafs-api-secret.yaml` from the backend's IPs and Secrets
+Manager password. If you've already generated the manifests
+manually, omit those two flags.
+
+All flags can alternatively be set via environment variables:
+
+| Flag | Environment Variable | Description |
+| ---- | -------------------- | ----------- |
+| `--cluster-name` | `CLUSTER_NAME` | EKS cluster name |
+| `--quay-username` | `QUAY_USERNAME` | Quay.io username |
+| `--quay-password` | `QUAY_PASSWORD` | Quay.io password |
+| `--backend-name` | `WEKA_BACKEND_NAME` | WEKA backend tag (auto-generates manifests) |
+| `--secret-arn` | `WEKA_SECRET_ARN` | Secrets Manager ARN for WEKA password |
+| `--region` | `AWS_REGION` | AWS region |
+| `--operator-version` | `WEKA_OPERATOR_VERSION` | Operator chart version (default: `v1.11.0`) |
+
+Run `./deploy.sh --help` for all options.
+
+To regenerate manifests standalone (e.g. for manual review before
+deploy), run `./generate-manifests.sh --help`.
+
+See [Cleanup](#cleanup) for teardown instructions.
 
 ---
 
@@ -60,10 +105,11 @@ for configuration details.
 Save these outputs for EKS configuration:
 
 ```bash
-# Security group for EKS nodes (use in additional_node_security_group_ids)
+# Security group for EKS nodes (use in additional_security_group_ids)
 terraform output -json weka_deployment_output | jq -r '.sg_ids[]'
 
 # Get backend IPs for WekaClient configuration
+# Uses wildcard match — WEKA names instances <prefix>-<cluster_name>-instance-backend
 aws ec2 describe-instances \
   --filters "Name=tag:Name,Values=*<cluster_name>*" "Name=instance-state-name,Values=running" \
   --query 'Reservations[].Instances[].PrivateIpAddress' \
@@ -79,8 +125,19 @@ cp terraform.tfvars.example terraform.tfvars
 
 Edit `terraform.tfvars`:
 
-- Set `additional_node_security_group_ids` to the WEKA backend security group
+- Set `additional_security_group_ids` to include the WEKA backend security group
+- Set `subnet_ids` on the clients group to the same subnet as the
+  WEKA backend (single placement group / AZ)
 - Configure WEKA client node group with required settings:
+
+The client node group uses a label + taint pattern:
+
+- **Label** `weka.io/supports-clients=true` — positive selector so
+  WEKA-aware workloads (operator node-agent, WEKA client containers,
+  CSI plugin) know which nodes to land on.
+- **Taint** `weka.io/client=true:NoSchedule` — prevents non-WEKA
+  workloads from scheduling on these (typically expensive) nodes.
+  Anything that needs to run here must explicitly tolerate the taint.
 
 ```hcl
 node_groups = {
@@ -97,13 +154,18 @@ node_groups = {
     desired_size              = 2
     min_size                  = 1
     max_size                  = 4
-    disk_size                 = 100
-    imds_hop_limit_2          = true  # Required for ensure-nics
-    enable_cpu_manager_static = true  # DPDK CPU allocation
-    hugepages_count           = 2048  # ~1.5 GiB per core, rounded up
+    subnet_ids                = ["subnet-xxx"] # Same AZ as WEKA backend
+    imds_hop_limit_2          = true
+    enable_cpu_manager_static = true
+    hugepages_count           = 2048
     labels = {
       "weka.io/supports-clients" = "true"
     }
+    taints = [{
+      key    = "weka.io/client"
+      value  = "true"
+      effect = "NO_SCHEDULE"
+    }]
   }
 }
 ```
@@ -249,6 +311,16 @@ ensure-nics-policy   ensure-nics   Done
 
 ## 7. Deploy WekaClient
 
+Get the backend IPs for `joinIpPorts`:
+
+```bash
+# Uses wildcard match — WEKA names instances <prefix>-<cluster_name>-instance-backend
+aws ec2 describe-instances \
+  --filters "Name=tag:Name,Values=*<cluster_name>*" "Name=instance-state-name,Values=running" \
+  --query 'Reservations[].Instances[].PrivateIpAddress' \
+  --output text | tr '\t' '\n'
+```
+
 Copy and edit the example manifest:
 
 ```bash
@@ -360,19 +432,32 @@ Copy and edit the example manifest:
 cp manifests/core/csi-wekafs-api-secret.yaml.example manifests/core/csi-wekafs-api-secret.yaml
 ```
 
-Edit `manifests/core/csi-wekafs-api-secret.yaml`. All `data`
-values must be **base64 encoded**. For example:
+The secret requires these fields, all **base64 encoded**:
 
-```yaml
-data:
-  username: admin
-  password: admin-password
-  scheme: https
-  endpoints: 10.0.67.159:14000,10.0.67.15:14000,10.0.67.69:14000
-  organization: Root
+| Field | Value |
+| ----- | ----- |
+| `username` | `admin` (default) |
+| `password` | Retrieved from Secrets Manager (see below) |
+| `scheme` | `https` |
+| `endpoints` | Backend IPs with port 14000, comma-separated |
+| `organization` | `Root` |
+
+Retrieve the admin password:
+
+```bash
+cd terraform/weka-backend
+terraform output -json weka_deployment_output \
+  | jq -r '.cluster_helper_commands.get_password' | bash
+cd ../..
 ```
 
-would look like this in a base64 encoding:
+To base64 encode a value:
+
+```bash
+echo -n 'your-value' | base64
+```
+
+Example encoded secret:
 
 ```yaml
 apiVersion: v1
@@ -385,14 +470,8 @@ data:
   username: YWRtaW4=
   password: YWRtaW4tcGFzc3dvcmQ=
   scheme: aHR0cHM=
-  endpoints: MTAuMC42Ny4xNTk6MTQwMDAsIDEwLjAuNjcuMTU6MTQwMDAsMTAuMC42Ny42OToxNDAwMA==
+  endpoints: MTAuMC42Ny4xNTk6MTQwMDAsMTAuMC42Ny4xNToxNDAwMA==
   organization: Um9vdA==
-```
-
-To encode a value:
-
-```bash
-echo -n 'your-value' | base64
 ```
 
 Once you've entered the correct values, create the secret:
@@ -420,24 +499,52 @@ helm repo update
 Review `manifests/core/values-csi-wekafs.yaml`:
 
 ```yaml
+controllerPluginTolerations:
+  - key: "node-role.kubernetes.io/master"
+    operator: "Exists"
+    effect: "NoSchedule"
+  - key: "weka.io/client"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"
+
+nodePluginTolerations:
+  - key: "node-role.kubernetes.io/master"
+    operator: "Exists"
+    effect: "NoSchedule"
+  - key: "weka.io/client"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"
+
+controller:
+  nodeSelector:
+    weka.io/supports-clients: "true"
+
 node:
   nodeSelector:
     weka.io/supports-clients: "true"
-  tolerations:
-    - key: "weka.io/client"
-      operator: "Equal"
-      value: "true"
-      effect: "NoSchedule"
 
 pluginConfig:
   allowInsecureHttps: true
 ```
 
-Key settings:
+Both the CSI controller and node DaemonSet need to run on **WEKA client
+nodes** — the CSI controller performs local WEKA filesystem mounts for
+volume operations, so it needs the WEKA client driver loaded on the
+same node (not just API access to the backend).
 
-- **nodeSelector**: Restricts CSI node pods to WEKA client nodes only
-- **tolerations**: Allows CSI node pods to schedule on tainted client nodes
-- **allowInsecureHttps**: Required when the WEKA backend uses self-signed SSL certificates
+The settings below tie into the label + taint we configured on the
+client node group:
+
+- **`controller.nodeSelector` + `node.nodeSelector`**: match the
+  `weka.io/supports-clients=true` label so both components land on
+  client nodes.
+- **`controllerPluginTolerations` + `nodePluginTolerations`**:
+  tolerate the `weka.io/client=true:NoSchedule` taint so they can
+  actually schedule there.
+- **`allowInsecureHttps`**: required when the WEKA backend uses
+  self-signed SSL certificates.
 
 Install the plugin:
 
@@ -523,29 +630,20 @@ PVC configuration options:
 | `volumeMode`  | `Filesystem` (default), `Block`                  | `Filesystem` for mounted directories              |
 | `storage`     | e.g. `10Gi`, `100Gi`                             | Requested volume size                             |
 
-**weka-mount-test.yaml** - Test pod:
+**weka-writer.yaml** - Writes a file to the PVC:
 
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: weka-pvc-test
-  namespace: weka-test
-spec:
-  nodeSelector:
-    weka.io/supports-clients: "true"  # Schedule on WEKA client nodes
-  containers:
-  - name: test-container
-    image: busybox:1.37.0
-    volumeMounts:
-    - name: weka-volume
-      mountPath: "/data"
-    command: ["sh", "-c", "echo 'Hello from WEKA!' > /data/hello.txt && ls -la /data && sleep 3600"]
-  volumes:
-  - name: weka-volume
-    persistentVolumeClaim:
-      claimName: pvc-wekafs-dir
-```
+- Mounts `pvc-wekafs-dir` at `/data`
+- Writes `hello.txt` then sleeps
+
+**weka-reader.yaml** - Reads the file written by `weka-writer`:
+
+- Mounts the same PVC at `/data`
+- Reads `hello.txt` then sleeps
+- Demonstrates ReadWriteMany across pods
+
+Both pods use `nodeSelector: weka.io/supports-clients=true` and
+tolerate `weka.io/client=true:NoSchedule` so they schedule on WEKA
+client nodes.
 
 ### 9.2 Deploy Test Resources
 
@@ -589,16 +687,17 @@ kubectl get pods -n weka-test
 Expected output:
 
 ```text
-NAME            READY   STATUS    RESTARTS   AGE
-weka-pvc-test   1/1     Running   0          60s
+NAME              READY   STATUS    RESTARTS   AGE
+weka-writer       1/1     Running   0          60s
+weka-reader       1/1     Running   0          60s
 ```
 
 ### 9.5 Verify Data Written
 
-Check that the pod successfully wrote to the WEKA volume:
+Check that the writer pod successfully wrote to the WEKA volume:
 
 ```bash
-kubectl logs weka-pvc-test -n weka-test
+kubectl logs weka-writer -n weka-test
 ```
 
 Expected output shows directory listing:
@@ -610,88 +709,33 @@ drwxr-xr-x    1 root     root          4096 Jan 12 12:00 ..
 -rw-r--r--    1 root     root            18 Jan 12 12:00 hello.txt
 ```
 
-Verify file contents:
+### 9.6 Verify Shared Access (ReadWriteMany)
+
+The reader pod mounts the same PVC and reads the file written by the
+writer — confirming ReadWriteMany works across pods:
 
 ```bash
-kubectl exec weka-pvc-test -n weka-test -- cat /data/hello.txt
+kubectl logs weka-reader -n weka-test
 ```
 
-### 9.6 Cleanup Test Resources
+Expected output:
 
-```bash
-kubectl delete namespace weka-test
+```text
+Reading data written by another pod:
+Hello from WEKA!
 ```
-
----
-
-## Automated Deployment
-
-Two scripts automate the deployment:
-
-1. **`generate-manifests.sh`** -- Queries the WEKA backend to create
-   `weka-client.yaml` and `csi-wekafs-api-secret.yaml` with the
-   correct backend IPs and credentials.
-2. **`deploy.sh`** -- Installs the operator, ensure-nics, client,
-   CSI plugin, and runs a test.
-
-### Step 1: Generate Manifests
-
-Run this first. It queries EC2 for the backend IPs and Secrets
-Manager for the password, then writes the two YAML files:
-
-```bash
-./generate-manifests.sh \
-  --backend-name eks-storage-cluster \
-  --secret-arn arn:aws:secretsmanager:eu-west-1:123456:secret:weka/...
-```
-
-The `--backend-name` is the name tag on your WEKA backend EC2
-instances. The `--secret-arn` is the Secrets Manager ARN for the
-WEKA admin password (shown in the `terraform output` of the
-weka-backend module).
-
-Run `./generate-manifests.sh --help` for all options (cores,
-hugepages, UDP mode, etc.).
-
-Review the generated files before proceeding:
-
-```bash
-cat manifests/core/weka-client.yaml
-cat manifests/core/csi-wekafs-api-secret.yaml
-```
-
-### Step 2: Deploy
-
-```bash
-./deploy.sh <cluster-name> <quay-username> <quay-password>
-```
-
-This runs through all the Kubernetes steps: operator install,
-ensure-nics, client deployment, CSI plugin, StorageClass, and a
-PVC test.
-
-Arguments can also be passed as environment variables:
-
-| Variable | Description |
-| ---------- | ------------- |
-| `CLUSTER_NAME` | EKS cluster name |
-| `QUAY_USERNAME` | Quay.io username |
-| `QUAY_PASSWORD` | Quay.io password |
-| `WEKA_OPERATOR_VERSION` | Operator chart version (default: `v1.11.0`) |
-
-To remove everything:
-
-```bash
-./deploy.sh --cleanup <cluster-name>
-```
-
-Run `./deploy.sh --help` for all options.
-
----
 
 ## Cleanup
 
 ### Remove WEKA Components
+
+Quick option (matches `deploy.sh`):
+
+```bash
+./deploy.sh --cleanup --cluster-name my-eks-cluster
+```
+
+Or manually:
 
 ```bash
 # Delete test namespace

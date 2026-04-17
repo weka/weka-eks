@@ -1,25 +1,20 @@
+# See modules/eks/README.md for the full list of variables.
+
 region       = "eu-west-1"
 cluster_name = "weka-eks"
 
-# Get subnet IDs from your VPC (use WEKA backend's subnet or same VPC)
 subnet_ids = [
   "subnet-xxxxxxxxx",
   "subnet-yyyyyyyyy",
 ]
 
-# WEKA backend security group - allows WEKA client nodes to communicate with backend
-# Get this from: cd ../weka-backend && terraform output sg_ids
-additional_node_security_group_ids = ["sg-xxxxxxxxx"]
+# WEKA backend SG for client-backend communication
+# Get from: cd ../weka-backend && terraform output -json weka_deployment_output | jq -r '.sg_ids[]'
+additional_security_group_ids = ["sg-xxxxxxxxx"]
 
 # SSO role for cluster admin access (use full path for SSO roles)
 # Format: arn:aws:iam::ACCOUNT:role/aws-reserved/sso.amazonaws.com/AWSReservedSSO_RoleName_xxxx
 admin_role_arn = "arn:aws:iam::123456789012:role/aws-reserved/sso.amazonaws.com/AWSReservedSSO_AdministratorAccess_xxxxxxxxxxxx"
-
-# Optional: SSH key for node access
-# key_pair_name = "my-key"
-
-# Optional: Enable SSM for node debugging
-# enable_ssm_access = true
 
 node_groups = {
   system = {
@@ -30,21 +25,15 @@ node_groups = {
     disk_size      = 50
   }
 
-  weka-clients = {
-    instance_types   = ["c6i.12xlarge"]
-    desired_size     = 2
-    min_size         = 1
-    max_size         = 4
-    imds_hop_limit_2 = true # Required for ensure-nics DPDK networking
-
-    # Enable static CPU Manager for DPDK and dedicated CPU allocation
+  clients = {
+    instance_types            = ["c6i.12xlarge"]
+    desired_size              = 2
+    min_size                  = 1
+    max_size                  = 4
+    subnet_ids                = ["subnet-xxxxxxxxx"] # Same AZ as WEKA backend
+    imds_hop_limit_2          = true
     enable_cpu_manager_static = true
-
-    # 2 MiB hugepages allocated at boot via nodeadm user data.
-    # Per client pod: coresNum * 1564 MiB + (200 + 64 * coresNum) MiB offset.
-    # For 2 cores: 3128 + 328 = 3456 MiB = 1728 pages. Rounded up for headroom.
-    hugepages_count = 2048
-
+    hugepages_count           = 2048
     labels = {
       "weka.io/supports-clients" = "true"
     }

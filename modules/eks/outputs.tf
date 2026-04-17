@@ -44,16 +44,6 @@ output "node_iam_role_name" {
   value       = aws_iam_role.nodes.name
 }
 
-output "oidc_provider_arn" {
-  description = "ARN of the OIDC Provider for IRSA"
-  value       = aws_iam_openid_connect_provider.cluster.arn
-}
-
-output "oidc_provider_url" {
-  description = "URL of the OIDC Provider"
-  value       = aws_iam_openid_connect_provider.cluster.url
-}
-
 output "node_groups" {
   description = "Map of node group details"
   value = {
@@ -68,11 +58,6 @@ output "node_groups" {
 output "weka_nodes_security_group_id" {
   description = "WEKA intra-node security group ID (null if not created)"
   value       = var.create_weka_nodes_security_group ? aws_security_group.weka_nodes[0].id : null
-}
-
-output "weka_operator_irsa_role_arn" {
-  description = "IRSA role ARN for the WEKA operator (null if not enabled)"
-  value       = var.enable_weka_operator_irsa ? aws_iam_role.weka_operator[0].arn : null
 }
 
 output "configure_kubectl" {

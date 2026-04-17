@@ -166,45 +166,6 @@ variable "admin_role_arn" {
 }
 
 # -----------------------------------------------------------------------------
-# IRSA for WEKA operator (ENI management)
-# -----------------------------------------------------------------------------
-variable "enable_weka_operator_irsa" {
-  description = "Create an IRSA role/policy for the WEKA operator ENI operations"
-  type        = bool
-  default     = true
-}
-
-variable "weka_operator_namespace" {
-  description = "Namespace for the WEKA operator controller service account"
-  type        = string
-  default     = "weka-operator-system"
-}
-
-variable "weka_operator_service_account" {
-  description = "Service account name for the WEKA operator controller"
-  type        = string
-  default     = "weka-operator-controller-manager"
-}
-
-variable "enforce_eni_tag_conditions" {
-  description = "Restrict ENI mutation actions using tag-based conditions"
-  type        = bool
-  default     = false
-}
-
-variable "eni_tag_key" {
-  description = "Tag key for ENI restriction conditions (only used if enforce_eni_tag_conditions = true)"
-  type        = string
-  default     = "weka.io/cluster"
-}
-
-variable "eni_tag_value" {
-  description = "Tag value for ENI restriction conditions. Defaults to cluster_name if null."
-  type        = string
-  default     = null
-}
-
-# -----------------------------------------------------------------------------
 # Tags
 # -----------------------------------------------------------------------------
 variable "tags" {

@@ -6,10 +6,6 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 6.0"
     }
-    tls = {
-      source  = "hashicorp/tls"
-      version = "~> 4.0"
-    }
   }
 }
 
@@ -19,8 +15,6 @@ data "aws_partition" "current" {}
 # Locals
 # -----------------------------------------------------------------------------
 locals {
-  eni_tag_value_effective = var.eni_tag_value != null ? var.eni_tag_value : var.cluster_name
-
   # Launch templates are needed when any of these conditions are true:
   # Per-node-group: imds_hop_limit_2, enable_cpu_manager_static, disable_hyperthreading, hugepages_count
   # Global: additional_security_group_ids, create_weka_nodes_security_group
@@ -103,21 +97,6 @@ resource "aws_eks_cluster" "main" {
     update = "60m"
     delete = "15m"
   }
-}
-
-# -----------------------------------------------------------------------------
-# OIDC Provider for IRSA (IAM Roles for Service Accounts)
-# -----------------------------------------------------------------------------
-data "tls_certificate" "cluster" {
-  url = aws_eks_cluster.main.identity[0].oidc[0].issuer
-}
-
-resource "aws_iam_openid_connect_provider" "cluster" {
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = [data.tls_certificate.cluster.certificates[0].sha1_fingerprint]
-  url             = aws_eks_cluster.main.identity[0].oidc[0].issuer
-
-  tags = var.tags
 }
 
 # -----------------------------------------------------------------------------
@@ -363,105 +342,4 @@ resource "aws_eks_access_policy_association" "admin" {
   }
 
   depends_on = [aws_eks_access_entry.admin]
-}
-
-# -----------------------------------------------------------------------------
-# IRSA role for WEKA operator/controller (ENI management)
-# -----------------------------------------------------------------------------
-data "aws_iam_policy_document" "weka_operator_assume_role" {
-  count = var.enable_weka_operator_irsa ? 1 : 0
-
-  statement {
-    effect  = "Allow"
-    actions = ["sts:AssumeRoleWithWebIdentity"]
-
-    principals {
-      type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.cluster.arn]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "${replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")}:sub"
-      values   = ["system:serviceaccount:${var.weka_operator_namespace}:${var.weka_operator_service_account}"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "${replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")}:aud"
-      values   = ["sts.amazonaws.com"]
-    }
-  }
-}
-
-resource "aws_iam_role" "weka_operator" {
-  count              = var.enable_weka_operator_irsa ? 1 : 0
-  name_prefix        = "${var.cluster_name}-weka-operator-"
-  assume_role_policy = data.aws_iam_policy_document.weka_operator_assume_role[0].json
-  tags               = var.tags
-}
-
-data "aws_iam_policy_document" "weka_operator_eni" {
-  count = var.enable_weka_operator_irsa ? 1 : 0
-
-  statement {
-    sid    = "EC2Describe"
-    effect = "Allow"
-    actions = [
-      "ec2:DescribeInstances",
-      "ec2:DescribeNetworkInterfaces",
-      "ec2:DescribeSubnets",
-      "ec2:DescribeSecurityGroups",
-      "ec2:DescribeVpcs",
-      "ec2:DescribeInstanceTypes"
-    ]
-    resources = ["*"]
-  }
-
-  statement {
-    sid    = "EC2ManageENIs"
-    effect = "Allow"
-    actions = [
-      "ec2:CreateNetworkInterface",
-      "ec2:AttachNetworkInterface",
-      "ec2:DetachNetworkInterface",
-      "ec2:DeleteNetworkInterface",
-      "ec2:ModifyNetworkInterfaceAttribute",
-      "ec2:AssignPrivateIpAddresses",
-      "ec2:UnassignPrivateIpAddresses",
-      "ec2:CreateTags"
-    ]
-    resources = ["*"]
-
-    dynamic "condition" {
-      for_each = var.enforce_eni_tag_conditions ? [1] : []
-      content {
-        test     = "StringEquals"
-        variable = "aws:RequestTag/${var.eni_tag_key}"
-        values   = [local.eni_tag_value_effective]
-      }
-    }
-
-    dynamic "condition" {
-      for_each = var.enforce_eni_tag_conditions ? [1] : []
-      content {
-        test     = "StringEquals"
-        variable = "ec2:ResourceTag/${var.eni_tag_key}"
-        values   = [local.eni_tag_value_effective]
-      }
-    }
-  }
-}
-
-resource "aws_iam_policy" "weka_operator_eni" {
-  count       = var.enable_weka_operator_irsa ? 1 : 0
-  name_prefix = "${var.cluster_name}-weka-eni-"
-  policy      = data.aws_iam_policy_document.weka_operator_eni[0].json
-  tags        = var.tags
-}
-
-resource "aws_iam_role_policy_attachment" "weka_operator_eni" {
-  count      = var.enable_weka_operator_irsa ? 1 : 0
-  role       = aws_iam_role.weka_operator[0].name
-  policy_arn = aws_iam_policy.weka_operator_eni[0].arn
 }

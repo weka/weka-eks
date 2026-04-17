@@ -33,7 +33,7 @@ do_cleanup() {
     local cluster_name="$1"
 
     if [[ -z "$cluster_name" ]]; then
-        echo "[ERROR] Cluster name required for cleanup. Usage: $0 --cleanup <cluster-name>"
+        echo "[ERROR] Cluster name required for cleanup (--cluster-name or CLUSTER_NAME)."
         exit 1
     fi
 
@@ -92,57 +92,59 @@ do_cleanup() {
 # -----------------------------------------------------------------------------
 show_help() {
     cat <<EOF
-Usage: $0 [OPTIONS] [cluster-name] [quay-username] [quay-password]
+Usage: $0 [OPTIONS]
 
 Deploy WEKA on an existing EKS cluster. Automatically generates
 weka-client.yaml and csi-wekafs-api-secret.yaml from the WEKA
-backend if WEKA_BACKEND_NAME and WEKA_SECRET_ARN are set.
+backend if --backend-name and --secret-arn are provided.
 
-Arguments:
-  cluster-name      EKS cluster name (or set CLUSTER_NAME)
-  quay-username     Quay.io username (or set QUAY_USERNAME)
-  quay-password     Quay.io password (or set QUAY_PASSWORD)
+All flags can alternatively be set via environment variables.
 
 Options:
-  -h, --help        Show this help message
-  -c, --cleanup     Remove all WEKA components from the cluster
-
-Environment variables:
-  CLUSTER_NAME              EKS cluster name
-  QUAY_USERNAME             Quay.io username
-  QUAY_PASSWORD             Quay.io password
-  WEKA_BACKEND_NAME         WEKA backend cluster name tag (for auto-generating manifests)
-  WEKA_SECRET_ARN           Secrets Manager ARN for WEKA password
-  AWS_REGION                AWS region (for backend queries)
-  WEKA_OPERATOR_VERSION     Operator Helm chart version (default: v1.11.0)
+  --cluster-name NAME       EKS cluster name (or CLUSTER_NAME)
+  --quay-username USER      Quay.io username (or QUAY_USERNAME)
+  --quay-password PASS      Quay.io password (or QUAY_PASSWORD)
+  --backend-name NAME       WEKA backend cluster name tag (or WEKA_BACKEND_NAME)
+  --secret-arn ARN          Secrets Manager ARN for WEKA password (or WEKA_SECRET_ARN)
+  --region REGION           AWS region (or AWS_REGION)
+  --operator-version VER    Operator Helm chart version (or WEKA_OPERATOR_VERSION, default: v1.11.0)
+  -c, --cleanup             Remove all WEKA components from the cluster
+  -h, --help                Show this help message
 
 Examples:
-  # Generate manifests automatically and deploy
-  WEKA_BACKEND_NAME=eks-storage-cluster \\
-  WEKA_SECRET_ARN=arn:aws:secretsmanager:eu-west-1:123456:secret:weka/... \\
-  $0 my-eks-cluster myuser mypass
+  # Flags
+  $0 --cluster-name my-eks-cluster --quay-username myuser --quay-password mypass \\
+     --backend-name eks-storage-cluster \\
+     --secret-arn arn:aws:secretsmanager:eu-west-1:123456:secret:weka/...
 
-  # Deploy with pre-configured manifests
-  $0 my-eks-cluster myuser mypass
+  # Environment variables
+  export CLUSTER_NAME=my-eks-cluster QUAY_USERNAME=myuser QUAY_PASSWORD=mypass
+  export WEKA_BACKEND_NAME=eks-storage-cluster
+  export WEKA_SECRET_ARN=arn:aws:secretsmanager:...
+  $0
 
   # Cleanup
-  $0 --cleanup my-eks-cluster
+  $0 --cleanup --cluster-name my-eks-cluster
 EOF
     exit 0
 }
 
-if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-    show_help
-fi
+CLEANUP=false
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)           show_help ;;
+        -c|--cleanup)        CLEANUP=true; shift ;;
+        --cluster-name)      CLUSTER_NAME="$2"; shift 2 ;;
+        --quay-username)     QUAY_USERNAME="$2"; shift 2 ;;
+        --quay-password)     QUAY_PASSWORD="$2"; shift 2 ;;
+        --backend-name)      WEKA_BACKEND_NAME="$2"; shift 2 ;;
+        --secret-arn)        WEKA_SECRET_ARN="$2"; shift 2 ;;
+        --region)            AWS_REGION="$2"; shift 2 ;;
+        --operator-version)  WEKA_OPERATOR_VERSION="$2"; shift 2 ;;
+        *)                   echo "[ERROR] Unknown option: $1"; echo "Run $0 --help for usage"; exit 1 ;;
+    esac
+done
 
-if [[ "$1" == "--cleanup" || "$1" == "-c" ]]; then
-    do_cleanup "$2"
-fi
-
-# Configuration
-CLUSTER_NAME="${1:-$CLUSTER_NAME}"
-QUAY_USERNAME="${2:-$QUAY_USERNAME}"
-QUAY_PASSWORD="${3:-$QUAY_PASSWORD}"
 WEKA_OPERATOR_VERSION="${WEKA_OPERATOR_VERSION:-v1.11.0}"
 
 REGION_FLAG=""
@@ -150,17 +152,19 @@ if [[ -n "$AWS_REGION" ]]; then
     REGION_FLAG="--region $AWS_REGION"
 fi
 
+if [[ "$CLEANUP" == "true" ]]; then
+    do_cleanup "$CLUSTER_NAME"
+fi
+
 # Validate inputs
 if [[ -z "$CLUSTER_NAME" ]]; then
-    echo "[ERROR] Cluster name required."
-    echo "Usage: $0 <cluster-name> <quay-username> <quay-password>"
-    echo "       $0 --cleanup <cluster-name>"
+    echo "[ERROR] Cluster name required (--cluster-name or CLUSTER_NAME)."
+    echo "Run $0 --help for usage"
     exit 1
 fi
 
 if [[ -z "$QUAY_USERNAME" || -z "$QUAY_PASSWORD" ]]; then
-    echo "[ERROR] Quay.io credentials required."
-    echo "Set QUAY_USERNAME and QUAY_PASSWORD environment variables, or pass as arguments."
+    echo "[ERROR] Quay.io credentials required (--quay-username/--quay-password or QUAY_USERNAME/QUAY_PASSWORD)."
     exit 1
 fi
 
@@ -344,14 +348,14 @@ for i in {1..30}; do
 done
 
 echo "  Waiting for test pod to run..."
-kubectl wait --for=condition=Ready pod/weka-pvc-test -n weka-test --timeout=60s 2>/dev/null || true
+kubectl wait --for=condition=Ready pod/weka-writer -n weka-test --timeout=60s 2>/dev/null || true
 
 echo ""
 echo "Test Results:"
 kubectl get pvc -n weka-test
 kubectl get pods -n weka-test
 echo ""
-kubectl logs weka-pvc-test -n weka-test 2>/dev/null || echo "  (pod not ready yet)"
+kubectl logs weka-writer -n weka-test 2>/dev/null || echo "  (pod not ready yet)"
 
 echo ""
 echo "=============================================="
