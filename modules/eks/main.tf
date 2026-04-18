@@ -17,14 +17,13 @@ data "aws_partition" "current" {}
 locals {
   # Launch templates are needed when any of these conditions are true:
   # Per-node-group: imds_hop_limit_2, enable_cpu_manager_static, disable_hyperthreading, hugepages_count
-  # Global: additional_security_group_ids, create_weka_nodes_security_group
+  # Global: additional_security_group_ids
   node_groups_use_lt = {
     for k, v in var.node_groups : k => v
     if try(v.imds_hop_limit_2, false) ||
        try(v.enable_cpu_manager_static, false) ||
        try(v.disable_hyperthreading, false) ||
        try(v.hugepages_count, 0) > 0 ||
-       var.create_weka_nodes_security_group ||
        length(var.additional_security_group_ids) > 0
   }
 }
@@ -139,44 +138,6 @@ resource "aws_iam_role_policy_attachment" "nodes_ssm" {
 }
 
 # -----------------------------------------------------------------------------
-# WEKA intra-node security group
-# -----------------------------------------------------------------------------
-data "aws_subnet" "first" {
-  count = var.create_weka_nodes_security_group ? 1 : 0
-  id    = var.subnet_ids[0]
-}
-
-resource "aws_security_group" "weka_nodes" {
-  count       = var.create_weka_nodes_security_group ? 1 : 0
-  name_prefix = "${var.cluster_name}-weka-nodes-"
-  description = "WEKA intra-node traffic (self-referencing)"
-  vpc_id      = data.aws_subnet.first[0].vpc_id
-  tags        = var.tags
-}
-
-resource "aws_security_group_rule" "weka_nodes_ingress_self" {
-  count                    = var.create_weka_nodes_security_group ? 1 : 0
-  type                     = "ingress"
-  security_group_id        = aws_security_group.weka_nodes[0].id
-  from_port                = 0
-  to_port                  = 0
-  protocol                 = "-1"
-  source_security_group_id = aws_security_group.weka_nodes[0].id
-  description              = "Allow all traffic within WEKA nodes"
-}
-
-resource "aws_security_group_rule" "weka_nodes_egress_all" {
-  count             = var.create_weka_nodes_security_group ? 1 : 0
-  type              = "egress"
-  security_group_id = aws_security_group.weka_nodes[0].id
-  from_port         = 0
-  to_port           = 0
-  protocol          = "-1"
-  cidr_blocks       = ["0.0.0.0/0"]
-  description       = "Allow all egress"
-}
-
-# -----------------------------------------------------------------------------
 # Launch Templates (created only for node groups that need them)
 # -----------------------------------------------------------------------------
 resource "aws_launch_template" "nodes" {
@@ -219,7 +180,6 @@ resource "aws_launch_template" "nodes" {
   # Attach cluster SG + WEKA intra-node SG (if enabled) + any additional SGs
   vpc_security_group_ids = compact(concat(
     [aws_eks_cluster.main.vpc_config[0].cluster_security_group_id],
-    var.create_weka_nodes_security_group ? [aws_security_group.weka_nodes[0].id] : [],
     var.additional_security_group_ids
   ))
 

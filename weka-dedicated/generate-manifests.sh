@@ -67,7 +67,7 @@ Output:
 
 Examples:
   $0 --backend-name eks-storage-cluster \\
-     --secret-arn arn:aws:secretsmanager:eu-west-1:123456:secret:weka/...
+     --secret-arn arn:aws:secretsmanager:us-west-2:123456:secret:weka/...
 
   WEKA_BACKEND_NAME=eks-storage-cluster \\
   WEKA_SECRET_ARN=arn:aws:secretsmanager:... \\
@@ -167,24 +167,24 @@ metadata:
   name: weka-client
   namespace: weka-operator-system
 spec:
+  coresNum: ${WEKA_CORES_NUM}
+  driversDistService: "https://drivers.weka.io"
+  hugepages: ${WEKA_HUGEPAGES}
   image: ${WEKA_IMAGE}
   imagePullSecret: weka-quay-io-secret
-  driversDistService: "https://drivers.weka.io"
-  portRange:
-    basePort: 46000
+  joinIpPorts:
+$(echo -e "$JOIN_IP_PORTS" | sed '/^$/d')
+  network:
+    udpMode: ${UDP_MODE}
   nodeSelector:
     weka.io/supports-clients: "true"
+  portRange:
+    basePort: 46000
   rawTolerations:
     - key: "weka.io/client"
       operator: "Equal"
       value: "true"
       effect: "NoSchedule"
-  joinIpPorts:
-$(echo -e "$JOIN_IP_PORTS" | sed '/^$/d')
-  coresNum: ${WEKA_CORES_NUM}
-  hugepages: ${WEKA_HUGEPAGES}
-  network:
-    udpMode: ${UDP_MODE}
 EOF
 
 echo "  Created: manifests/core/weka-client.yaml"

@@ -1,3 +1,7 @@
+# Helm values for the standalone WEKA CSI plugin.
+# Controller and node DaemonSet are pinned to WEKA client nodes.
+# allowInsecureHttps tolerates the backend's self-signed cert.
+
 controllerPluginTolerations:
   - key: "node-role.kubernetes.io/master"
     operator: "Exists"

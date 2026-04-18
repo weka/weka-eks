@@ -5,12 +5,11 @@
 # Prerequisites:
 #   - AWS CLI configured and authenticated
 #   - kubectl, helm, jq installed
-#   - EKS cluster deployed via Terraform
-#   - Manifests reviewed and configured
+#   - EKS cluster already deployed via Terraform
 #
 # Usage:
-#   ./deploy.sh <cluster-name> <quay-username> <quay-password>
-#   ./deploy.sh --cleanup <cluster-name>
+#   ./deploy.sh --cluster-name <name> --quay-username <user> --quay-password <pass>
+#   ./deploy.sh --cleanup --cluster-name <name>
 
 set -e
 
@@ -19,33 +18,39 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MANIFESTS_DIR="$SCRIPT_DIR/manifests"
 
 # -----------------------------------------------------------------------------
-# Cleanup
+# Cleanup function
 # -----------------------------------------------------------------------------
 do_cleanup() {
     local cluster_name="$1"
 
     if [[ -z "$cluster_name" ]]; then
-        echo "[ERROR] Cluster name required. Usage: $0 --cleanup <cluster-name>"
+        echo "[ERROR] Cluster name required for cleanup (--cluster-name or CLUSTER_NAME)."
         exit 1
     fi
 
     echo "=============================================="
-    echo "WEKA Axon Cleanup"
+    echo "WEKA Axon on EKS Cleanup"
     echo "=============================================="
     echo "  Cluster: $cluster_name"
     echo ""
 
+    # Configure kubectl
+    echo "Configuring kubectl..."
     aws eks update-kubeconfig --name "$cluster_name" $REGION_FLAG
 
+    # Delete test namespace
     echo "Deleting test namespace..."
     kubectl delete namespace weka-axon-test --ignore-not-found=true
 
+    # Delete StorageClass
     echo "Deleting StorageClass..."
     kubectl delete storageclass storageclass-wekafs-dir-api --ignore-not-found=true
 
+    # Delete WekaClient
     echo "Deleting WekaClient..."
     kubectl delete wekaclient --all -n "$WEKA_OPERATOR_NS" 2>/dev/null || true
 
+    # Wait for client pods to terminate
     echo "  Waiting for client pods to terminate..."
     for i in {1..60}; do
         PODS=$(kubectl get pods -n "$WEKA_OPERATOR_NS" -l weka.io/mode=client --no-headers 2>/dev/null | wc -l || echo "0")
@@ -62,9 +67,11 @@ do_cleanup() {
         kubectl delete wekacontainers -l weka.io/mode=client -n "$WEKA_OPERATOR_NS" --force --grace-period=0 2>/dev/null || true
     fi
 
+    # Delete WekaCluster
     echo "Deleting WekaCluster..."
     kubectl delete wekacluster --all -n "$WEKA_OPERATOR_NS" 2>/dev/null || true
 
+    # Wait for cluster pods to terminate
     echo "  Waiting for cluster pods to terminate..."
     for i in {1..120}; do
         PODS=$(kubectl get pods -n "$WEKA_OPERATOR_NS" -l app=weka --no-headers 2>/dev/null | wc -l || echo "0")
@@ -81,80 +88,90 @@ do_cleanup() {
         kubectl delete wekacontainers --all -n "$WEKA_OPERATOR_NS" --force --grace-period=0 2>/dev/null || true
     fi
 
+    # Delete WekaPolicies (ensure-nics, sign-drives)
     echo "Deleting WekaPolicies..."
     kubectl delete wekapolicy --all -n "$WEKA_OPERATOR_NS" 2>/dev/null || true
 
-    echo "Deleting WEKA Operator..."
+    # Delete WEKA operator
+    echo "Deleting WEKA operator..."
     helm uninstall weka-operator --namespace "$WEKA_OPERATOR_NS" 2>/dev/null || true
     kubectl delete namespace "$WEKA_OPERATOR_NS" --ignore-not-found=true
 
     echo ""
     echo "[OK] Cleanup complete"
-    echo "To destroy infrastructure: (cd terraform && terraform destroy)"
+    echo ""
+    echo "Note: EKS cluster is still running."
+    echo "To destroy infrastructure: (cd terraform/eks && terraform destroy)"
     exit 0
 }
 
 # -----------------------------------------------------------------------------
-# Help
+# Parse arguments
 # -----------------------------------------------------------------------------
 show_help() {
     cat <<EOF
-Usage: $0 [OPTIONS] [cluster-name] [quay-username] [quay-password]
+Usage: $0 [OPTIONS]
 
 Deploy WEKA Axon on an existing EKS cluster.
 
-Arguments:
-  cluster-name      EKS cluster name (or set CLUSTER_NAME)
-  quay-username     Quay.io username (or set QUAY_USERNAME)
-  quay-password     Quay.io password (or set QUAY_PASSWORD)
+All flags can alternatively be set via environment variables.
 
 Options:
-  -h, --help        Show this help message
-  -c, --cleanup     Remove all WEKA components from the cluster
-
-Environment variables:
-  CLUSTER_NAME              EKS cluster name
-  QUAY_USERNAME             Quay.io username
-  QUAY_PASSWORD             Quay.io password
-  AWS_REGION                AWS region (if not set in AWS CLI config)
-  WEKA_OPERATOR_VERSION     Operator Helm chart version (default: v1.11.0)
+  --cluster-name NAME       EKS cluster name (or CLUSTER_NAME)
+  --quay-username USER      Quay.io username (or QUAY_USERNAME)
+  --quay-password PASS      Quay.io password (or QUAY_PASSWORD)
+  --region REGION           AWS region (or AWS_REGION)
+  --operator-version VER    Operator Helm chart version (or WEKA_OPERATOR_VERSION, default: v1.11.0)
+  -c, --cleanup             Remove all WEKA components from the cluster
+  -h, --help                Show this help message
 
 Examples:
-  $0 my-eks-cluster myuser mypass
-  $0 --cleanup my-eks-cluster
+  # Flags
+  $0 --cluster-name my-eks-cluster --quay-username myuser --quay-password mypass
+
+  # Environment variables
+  export CLUSTER_NAME=my-eks-cluster QUAY_USERNAME=myuser QUAY_PASSWORD=mypass
+  $0
+
+  # Cleanup
+  $0 --cleanup --cluster-name my-eks-cluster
 EOF
     exit 0
 }
 
-if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-    show_help
-fi
+CLEANUP=false
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)           show_help ;;
+        -c|--cleanup)        CLEANUP=true; shift ;;
+        --cluster-name)      CLUSTER_NAME="$2"; shift 2 ;;
+        --quay-username)     QUAY_USERNAME="$2"; shift 2 ;;
+        --quay-password)     QUAY_PASSWORD="$2"; shift 2 ;;
+        --region)            AWS_REGION="$2"; shift 2 ;;
+        --operator-version)  WEKA_OPERATOR_VERSION="$2"; shift 2 ;;
+        *)                   echo "[ERROR] Unknown option: $1"; echo "Run $0 --help for usage"; exit 1 ;;
+    esac
+done
 
-if [[ "$1" == "--cleanup" || "$1" == "-c" ]]; then
-    do_cleanup "$2"
-fi
-
-# -----------------------------------------------------------------------------
-# Configuration
-# -----------------------------------------------------------------------------
-CLUSTER_NAME="${1:-$CLUSTER_NAME}"
-QUAY_USERNAME="${2:-$QUAY_USERNAME}"
-QUAY_PASSWORD="${3:-$QUAY_PASSWORD}"
+WEKA_OPERATOR_VERSION="${WEKA_OPERATOR_VERSION:-v1.11.0}"
 
 REGION_FLAG=""
 if [[ -n "$AWS_REGION" ]]; then
     REGION_FLAG="--region $AWS_REGION"
 fi
-WEKA_OPERATOR_VERSION="${WEKA_OPERATOR_VERSION:-v1.11.0}"
+
+if [[ "$CLEANUP" == "true" ]]; then
+    do_cleanup "$CLUSTER_NAME"
+fi
 
 if [[ -z "$CLUSTER_NAME" ]]; then
-    echo "[ERROR] Cluster name required."
-    echo "Usage: $0 <cluster-name> <quay-username> <quay-password>"
+    echo "[ERROR] Cluster name required (--cluster-name or CLUSTER_NAME)."
+    echo "Run $0 --help for usage"
     exit 1
 fi
 
 if [[ -z "$QUAY_USERNAME" || -z "$QUAY_PASSWORD" ]]; then
-    echo "[ERROR] Quay.io credentials required."
+    echo "[ERROR] Quay.io credentials required (--quay-username/--quay-password or QUAY_USERNAME/QUAY_PASSWORD)."
     exit 1
 fi
 
@@ -319,7 +336,7 @@ kubectl create namespace weka-axon-test --dry-run=client -o yaml | kubectl apply
 
 # Apply PVC and writer pod first
 kubectl apply -f "$MANIFESTS_DIR/test/pvc.yaml"
-kubectl apply -f "$MANIFESTS_DIR/test/weka-app.yaml"
+kubectl apply -f "$MANIFESTS_DIR/test/weka-axon-writer.yaml"
 
 echo "  Waiting for PVC to bind..."
 for i in {1..30}; do
@@ -332,11 +349,11 @@ for i in {1..30}; do
 done
 
 echo "  Waiting for writer pod..."
-kubectl wait --for=condition=Ready pod/weka-axon-app -n weka-axon-test --timeout=120s 2>/dev/null || true
+kubectl wait --for=condition=Ready pod/weka-axon-writer -n weka-axon-test --timeout=120s 2>/dev/null || true
 
 # Apply reader pod after writer has started
-kubectl apply -f "$MANIFESTS_DIR/test/weka-app-reader.yaml"
-kubectl wait --for=condition=Ready pod/weka-axon-app-reader -n weka-axon-test --timeout=60s 2>/dev/null || true
+kubectl apply -f "$MANIFESTS_DIR/test/weka-axon-reader.yaml"
+kubectl wait --for=condition=Ready pod/weka-axon-reader -n weka-axon-test --timeout=60s 2>/dev/null || true
 
 echo ""
 echo "Test Results:"
@@ -344,15 +361,18 @@ kubectl get pvc -n weka-axon-test
 kubectl get pods -n weka-axon-test
 echo ""
 echo "Writer:"
-kubectl logs weka-axon-app -n weka-axon-test 2>/dev/null || echo "  (not ready yet)"
+kubectl logs weka-axon-writer -n weka-axon-test 2>/dev/null || echo "  (not ready yet)"
 echo ""
 echo "Reader:"
-kubectl logs weka-axon-app-reader -n weka-axon-test 2>/dev/null || echo "  (not ready yet)"
+kubectl logs weka-axon-reader -n weka-axon-test 2>/dev/null || echo "  (not ready yet)"
 
 echo ""
 echo "=============================================="
 echo "Deployment Complete"
 echo "=============================================="
+echo ""
+echo "Test namespace 'weka-axon-test' left running for verification."
+echo "To clean up: kubectl delete namespace weka-axon-test"
 echo ""
 echo "To check status:"
 echo "  kubectl get wekacluster -n $WEKA_OPERATOR_NS"

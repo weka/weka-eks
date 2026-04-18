@@ -4,18 +4,11 @@ metadata:
   name: weka-client
   namespace: weka-operator-system
 spec:
+  coresNum: 2
+  driversDistService: "https://drivers.weka.io"
+  hugepages: 3072
   image: quay.io/weka.io/weka-in-container:4.4.21.2
   imagePullSecret: weka-quay-io-secret
-  driversDistService: "https://drivers.weka.io"
-  portRange:
-    basePort: 46000
-  nodeSelector:
-    weka.io/supports-clients: "true"
-  rawTolerations:
-    - key: "weka.io/client"
-      operator: "Equal"
-      value: "true"
-      effect: "NoSchedule"
   joinIpPorts:
     - "10.0.67.159:14000"
     - "10.0.67.15:14000"
@@ -23,7 +16,14 @@ spec:
     - "10.0.65.82:14000"
     - "10.0.64.194:14000"
     - "10.0.67.69:14000"
-  coresNum: 2
-  hugepages: 3072
   network:
     udpMode: false
+  nodeSelector:
+    weka.io/supports-clients: "true"
+  portRange:
+    basePort: 46000
+  rawTolerations:
+    - key: "weka.io/client"
+      operator: "Equal"
+      value: "true"
+      effect: "NoSchedule"

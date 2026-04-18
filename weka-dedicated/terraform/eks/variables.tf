@@ -44,7 +44,7 @@ variable "public_access_cidrs" {
 }
 
 variable "additional_security_group_ids" {
-  description = "Additional security group IDs (e.g., WEKA backend SG). Attached to node launch templates when present, otherwise to the EKS cluster."
+  description = "Additional security group IDs"
   type        = list(string)
   default     = []
 }

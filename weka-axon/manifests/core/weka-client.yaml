@@ -11,17 +11,18 @@ spec:
   driversDistService: https://drivers.weka.io
   image: quay.io/weka.io/weka-in-container:4.4.21.2
   imagePullSecret: "weka-quay-io-secret"
-  network: {}
+  network:
+    udpMode: false
   nodeSelector:
     weka.io/supports-clients: "true"
+  portRange:
+    basePort: 46000
+    portRange: 0
   rawTolerations:
     - key: "weka.io/axon"
       operator: "Equal"
       value: "true"
       effect: "NoSchedule"
-  portRange:
-    basePort: 46000
-    portRange: 0
   targetCluster:
     name: weka-axon-eks-cluster
     namespace: weka-operator-system

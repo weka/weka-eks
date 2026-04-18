@@ -1,6 +1,6 @@
 # WEKA on Amazon EKS
 
-Deploy WEKA distributed storage with Amazon EKS using the WEKA Operator.
+Deploy WEKA distributed storage on Amazon EKS using the WEKA Operator.
 
 <p align="center">
   <img src="img/weka-eks-architecture.png" alt="WEKA + EKS Architecture" width="700">
@@ -37,21 +37,21 @@ and worker pods.
 
 ## Deployment
 
-See the README in each deployment model for detailed instructions.
-Each module is a standalone deployment; you can create a fully
-working WEKA + EKS cluster using the Terraform and other
-code/instructions in each section.
-
-Shared Terraform modules (e.g., [EKS](modules/eks/)) live in
-[modules/](modules/) and are referenced by each deployment model.
+Each deployment model is self-contained; see its README for
+step-by-step instructions. Shared Terraform modules
+([EKS](modules/eks/), [weka-backend](modules/weka-backend/))
+live in [modules/](modules/) and are referenced by each
+deployment model.
 
 ### Prerequisites
 
-* AWS CLI configured
-* Terraform >= 1.5
-* kubectl, Helm 3.x
-* WEKA download token from [get.weka.io](https://get.weka.io)
-* Quay.io credentials for WEKA images
+- AWS CLI configured with appropriate permissions
+- Existing VPC with subnets (private subnets recommended)
+- Terraform >= 1.5
+- kubectl, Helm 3.x
+- WEKA download token from [get.weka.io](https://get.weka.io)
+- Quay.io credentials for WEKA container images (available at
+  [get.weka.io](https://get.weka.io))
 
 ### How It Works
 
@@ -81,28 +81,27 @@ WEKA integrates with Kubernetes using the standard CSI
 
 The general flow for a deployment is:
 
-1. Deploy Terraform
+1. Deploy Infrastructure
 
-   * A `terraform.tfvars.example` is provided as guide
-   * The included Terraform builds a dedicated WEKA cluster
-     and/or an EKS cluster, depending on the deployment type
-   * Assumes some existing infrastructure (e.g. VPC, subnets)
+   - A `terraform.tfvars.example` is provided as a starting point
+   - Terraform builds the WEKA backend (dedicated) and/or the
+     EKS cluster, depending on the deployment model
+   - Assumes existing infrastructure (e.g. VPC, subnets)
 
-2. Install the WEKA Kubernetes operator
+2. Deploy the WEKA Operator
 
-   * A helm chart is available for installing the operator
+   - A Helm chart installs the operator
 
-3. Deploy WEKA custom resources
+3. Deploy WEKA resources
 
-   * Core manifests are provided for creating the WEKA
-     storage cluster
-   * `WekaCluster` and `WekaClient` CRs
+   - `WekaCluster` (axon) and `WekaClient` CRs
+   - Core manifests are provided
 
-4. Install CSI plugin
+4. Install the CSI plugin
 
-   * Can be installed as part of the operator or separately
+   - Bundled with the operator in axon, installed separately in dedicated
 
-5. Set up test application to consume WEKA storage
+5. Test with a PVC and pod
 
-   * Examples are provided for creating a `StorageClass`
-     and `PVC` that application pods can use
+   - Examples are provided for creating a `StorageClass` and `PVC`
+     that application pods can use

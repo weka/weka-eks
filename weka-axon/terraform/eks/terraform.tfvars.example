@@ -1,7 +1,7 @@
 # See modules/eks/README.md for the full list of variables.
 
 region       = "us-west-2"
-cluster_name = "weka-eks"
+cluster_name = "weka-axon-eks"
 
 subnet_ids = [
   "subnet-xxxxxxxxx",
@@ -27,22 +27,24 @@ node_groups = {
     }
   }
 
-  clients = {
-    instance_types            = ["c6i.12xlarge"]
-    desired_size              = 2
-    min_size                  = 1
-    max_size                  = 4
-    subnet_ids                = ["subnet-xxxxxxxxx"] # Same AZ as WEKA backend
+  axon = {
+    instance_types            = ["i3en.12xlarge"]
+    desired_size              = 6
+    min_size                  = 6
+    max_size                  = 6
+    subnet_ids                = ["subnet-xxxxxxxxx"] # Single AZ for intra-node traffic performance
+    disk_size                 = 200
     imds_hop_limit_2          = true
     enable_cpu_manager_static = true
-    disable_hyperthreading    = true # For c6i.12xlarge: 48 vCPU / 2 threads = 24 physical cores
+    disable_hyperthreading    = true # For i3en.12xlarge: 48 vCPU / 2 threads = 24 physical cores
     core_count                = 24
-    hugepages_count           = 2048
+    hugepages_count           = 10240
     labels = {
-      "weka.io/supports-clients" = "true"
+      "weka.io/supports-backends" = "true"
+      "weka.io/supports-clients"  = "true"
     }
     taints = [{
-      key    = "weka.io/client"
+      key    = "weka.io/axon"
       value  = "true"
       effect = "NO_SCHEDULE"
     }]

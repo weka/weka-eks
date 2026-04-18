@@ -7,23 +7,23 @@ spec:
   template: dynamic
   dynamicTemplate:
     computeContainers: 6
-    computeCores: 2
-    computeHugepages: 6144
+    computeCores: 3
+    computeHugepages: 9216
     driveContainers: 6
     driveCores: 2
-    numDrives: 1
+    numDrives: 4
   driversDistService: https://drivers.weka.io
+  gracefulDestroyDuration: "0"
   image: quay.io/weka.io/weka-in-container:4.4.21.2
   imagePullSecret: "weka-quay-io-secret"
-  gracefulDestroyDuration: "0"
+  network:
+    udpMode: false
   nodeSelector:
     weka.io/supports-backends: "true"
+  ports:
+    basePort: 15000
   rawTolerations:
     - key: "weka.io/axon"
       operator: "Equal"
       value: "true"
       effect: "NoSchedule"
-  ports:
-    basePort: 15000
-  network:
-    udpMode: false

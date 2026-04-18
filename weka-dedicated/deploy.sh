@@ -115,7 +115,7 @@ Examples:
   # Flags
   $0 --cluster-name my-eks-cluster --quay-username myuser --quay-password mypass \\
      --backend-name eks-storage-cluster \\
-     --secret-arn arn:aws:secretsmanager:eu-west-1:123456:secret:weka/...
+     --secret-arn arn:aws:secretsmanager:us-west-2:123456:secret:weka/...
 
   # Environment variables
   export CLUSTER_NAME=my-eks-cluster QUAY_USERNAME=myuser QUAY_PASSWORD=mypass

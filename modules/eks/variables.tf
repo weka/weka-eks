@@ -133,15 +133,6 @@ variable "cluster_dns_ip" {
 }
 
 # -----------------------------------------------------------------------------
-# WEKA intra-node security group
-# -----------------------------------------------------------------------------
-variable "create_weka_nodes_security_group" {
-  description = "Create a self-referencing security group for WEKA intra-node traffic"
-  type        = bool
-  default     = false
-}
-
-# -----------------------------------------------------------------------------
 # Cluster autoscaler
 # -----------------------------------------------------------------------------
 variable "enable_cluster_autoscaler" {

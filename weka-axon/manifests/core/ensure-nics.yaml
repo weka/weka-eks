@@ -13,5 +13,5 @@ spec:
       type: aws
       nodeSelector:
         weka.io/supports-backends: "true"
-      # Total secondary NICs per node (coresNum + 1 for EKS VPC CNI)
+      # Total secondary NICs = WEKA DPDK NICs + 1 for VPC CNI
       dataNICsNumber: 7

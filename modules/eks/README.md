@@ -64,8 +64,6 @@ module "eks" {
   cluster_name = var.cluster_name
   subnet_ids   = var.subnet_ids
 
-  create_weka_nodes_security_group = true
-
   node_groups = {
     system = {
       instance_types = ["m6i.large"]
@@ -187,8 +185,7 @@ node group with an optional launch template (auto-created when needed).
 A launch template is automatically created for any node group that
 sets `imds_hop_limit_2`, `enable_cpu_manager_static`,
 `disable_hyperthreading`, `hugepages_count > 0`, or when
-`additional_security_group_ids` or `create_weka_nodes_security_group`
-are set.
+`additional_security_group_ids` is set.
 
 **For WEKA client nodes (dedicated mode):**
 
@@ -215,7 +212,6 @@ are set.
 | `enable_cluster_autoscaler` | bool | `false` | Add autoscaler labels to node groups |
 | `cpu_manager_reconcile_period` | string | `"10s"` | Kubelet CPU manager reconcile period |
 | `cluster_dns_ip` | string | `null` | Custom cluster DNS IP for kubelet |
-| `create_weka_nodes_security_group` | bool | `false` | Self-referencing SG for WEKA intra-node traffic (axon mode) |
 
 ## Outputs
 
@@ -231,7 +227,6 @@ are set.
 | `node_iam_role_arn` | Node IAM role ARN |
 | `node_iam_role_name` | Node IAM role name |
 | `node_groups` | Node group details (id, arn, status) |
-| `weka_nodes_security_group_id` | WEKA intra-node SG (null if not created) |
 | `configure_kubectl` | kubectl configuration command |
 
 ## Launch Templates
@@ -241,7 +236,6 @@ custom configuration. When a launch template is present, the module
 attaches:
 
 - The EKS cluster security group
-- The WEKA intra-node SG (if `create_weka_nodes_security_group = true`)
 - Any `additional_security_group_ids`
 
 The nodeadm user data template configures (when applicable):
