@@ -283,21 +283,21 @@ ip-10-0-10-165.us-west-2.compute.internal   Ready    <none>   5m    v1.33.8-eks-
 
 ---
 
-## Automated Kubernetes Setup
+## Automated Setup
 
 Once the Terraform modules are applied, `deploy.sh` handles
 everything else: manifest generation, operator install, ensure-nics,
 WekaClient, CSI plugin, StorageClass, and a test pod.
 
 If you'd rather walk through each step by hand, skip to
-[Manual Kubernetes Setup](#manual-kubernetes-setup).
+[Manual Setup](#manual-setup).
 
 ```bash
 ./deploy.sh \
-  --cluster-name my-eks-cluster \
+  --cluster-name weka-dedicated-eks \
   --quay-username myuser \
   --quay-password mypass \
-  --backend-name eks-storage-cluster \
+  --backend-name dedicated-storage \
   --secret-arn arn:aws:secretsmanager:us-west-2:123456:secret:weka/...
 ```
 
@@ -332,7 +332,7 @@ See [Cleanup](#cleanup) for teardown instructions.
 
 ---
 
-## Manual Kubernetes Setup
+## Manual Setup
 
 All commands assume you are in the `weka-dedicated/` directory.
 
@@ -585,7 +585,7 @@ Verify the client has deployed:
 kubectl get wekaclient -n weka-operator-system
 
 NAME          STATUS    TARGET CLUSTER       CORES   CONTAINERS(A/C/D)
-weka-client   Running   weka-eks-cluster     2       2/2/2
+weka-client   Running   dedicated-storage    2       2/2/2
 ```
 
 `CONTAINERS(A/C/D)` shows Active/Created/Desired. All should
@@ -762,7 +762,7 @@ client node group:
 Install the plugin:
 
 ```bash
-helm install csi-wekafs csi-wekafs/csi-wekafsplugin \
+helm upgrade --install csi-wekafs csi-wekafs/csi-wekafsplugin \
   --namespace csi-wekafs \
   -f manifests/core/values-csi-wekafs.yaml \
   --wait
@@ -774,8 +774,8 @@ Verify pods are running:
 kubectl get pods -n csi-wekafs
 
 NAME                                     READY   STATUS    RESTARTS   AGE
-csi-wekafs-controller-59965597b9-rvcmg   6/6     Running   0          2m40s
-csi-wekafs-controller-59965597b9-zmk6b   6/6     Running   0          2m40s
+csi-wekafs-controller-59965597b9-rvcmg   5/5     Running   0          2m40s
+csi-wekafs-controller-59965597b9-zmk6b   5/5     Running   0          2m40s
 csi-wekafs-node-654t7                    3/3     Running   0          2m40s
 csi-wekafs-node-nfnh4                    3/3     Running   0          2m40s
 ```
@@ -824,7 +824,7 @@ Key parameters:
 
 | Parameter             | Options                                        | Description                                                                                                |
 |-----------------------|------------------------------------------------|------------------------------------------------------------------------------------------------------------|
-| `volumeBindingMode`   | `WaitForFirstConsumer` (default), `Immediate`  | `WaitForFirstConsumer` delays provisioning until a pod uses the PVC - better for topology-aware scheduling |
+| `volumeBindingMode`   | `WaitForFirstConsumer` (default), `Immediate`  | Delays provisioning until a pod uses the PVC, improving topology-aware scheduling                          |
 | `reclaimPolicy`       | `Delete` (default), `Retain`                   | `Delete` removes the volume when PVC is deleted; `Retain` keeps it                                         |
 | `filesystemName`      | `default`                                      | WEKA filesystem to use for volumes                                                                         |
 | `capacityEnforcement` | `HARD`, `SOFT`                                 | `HARD` enforces quota limits strictly                                                                      |
@@ -894,7 +894,7 @@ NAME             STATUS    VOLUME   CAPACITY   ACCESS MODES   STORAGECLASS      
 pvc-wekafs-dir   Pending                                      storageclass-wekafs-dir-api   <unset>                 19s
 ```
 
-Status is **PENDING** because of `WaitForFirstConsumer`. It will
+Status is `Pending` because of `WaitForFirstConsumer`. It will
 bind once a pod references the PVC.
 
 #### 6.2 Deploy Writer Pod
@@ -954,9 +954,9 @@ You can check that the application ran:
 kubectl logs -n weka-test weka-writer
 
 total 4
-drwxrwxrwx    2 root     root          4096 Jan 12 12:00 .
-drwxr-xr-x    1 root     root          4096 Jan 12 12:00 ..
--rw-r--r--    1 root     root            17 Jan 12 12:00 hello.txt
+d---------    1 root     root             0 Feb  5 13:34 .
+drwxr-xr-x    1 root     root            63 Feb  5 13:34 ..
+-rw-r--r--    1 root     root            17 Feb  5 13:34 hello.txt
 Hello from WEKA!
 ```
 
@@ -1050,7 +1050,7 @@ Hello from WEKA!
 Quick option (matches `deploy.sh`):
 
 ```bash
-./deploy.sh --cleanup --cluster-name my-eks-cluster
+./deploy.sh --cleanup --cluster-name weka-dedicated-eks
 ```
 
 Or manually:

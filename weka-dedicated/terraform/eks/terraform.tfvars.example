@@ -1,7 +1,7 @@
 # See modules/eks/README.md for the full list of variables.
 
 region       = "us-west-2"
-cluster_name = "weka-eks"
+cluster_name = "weka-dedicated-eks"
 
 subnet_ids = [
   "subnet-xxxxxxxxx",
@@ -51,5 +51,5 @@ node_groups = {
 
 tags = {
   Environment = "dev"
-  Project     = "weka-eks"
+  Project     = "weka-on-eks"
 }
