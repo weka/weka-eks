@@ -24,6 +24,10 @@ kubeconfig
 *~
 .claude/
 
+# Python build artifacts (lifecycle scripts compile pyc on local edits)
+__pycache__/
+*.pyc
+
 # OS
 .DS_Store
 Thumbs.db
@@ -37,4 +41,6 @@ credentials/
 # WEKA manifests with credentials (use .example files as templates)
 weka-dedicated/manifests/core/weka-client.yaml
 weka-dedicated/manifests/core/csi-wekafs-api-secret.yaml
+hyperpod-dedicated/manifests/core/weka-client.yaml
+hyperpod-dedicated/manifests/core/csi-wekafs-api-secret.yaml
 weka-axon/manifests/*secret*.yaml

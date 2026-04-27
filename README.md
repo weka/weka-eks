@@ -39,9 +39,11 @@ and worker pods.
 
 Each deployment model is self-contained; see its README for
 step-by-step instructions. Shared Terraform modules
-([EKS](modules/eks/), [weka-backend](modules/weka-backend/))
-live in [modules/](modules/) and are referenced by each
-deployment model.
+([EKS](modules/eks/), [weka-backend](modules/weka-backend/)) and
+shared deployment scripts ([scripts/](scripts/)) live at the repo
+root. Each deployment model's local `deploy.sh` and
+`generate-manifests.sh` are thin shims that invoke the canonical
+versions in `scripts/` with the appropriate `--module` flag.
 
 ### Prerequisites
 
@@ -65,8 +67,8 @@ WEKA integrates with Kubernetes using the standard CSI
 │  1. WEKA Operator          2. CSI Plugin           3. Your Pods      │
 │  ┌─────────────────┐       ┌─────────────────┐     ┌──────────────┐  │
 │  │ Deploys WEKA    │       │ Provisions PVs  │     │ Mount WEKA   │  │
-│  │ client containers│  ──▶ │ from WEKA       │ ──▶ │ via PVC      │  │
-│  │ on selected nodes│      │ filesystem      │     │              │  │
+│  │ client pods on  │  ──▶  │ from WEKA       │ ──▶ │ via PVC      │  │
+│  │ selected nodes  │       │ filesystem      │     │              │  │
 │  └─────────────────┘       └─────────────────┘     └──────────────┘  │
 │         │                                                            │
 │         ▼                                                            │
