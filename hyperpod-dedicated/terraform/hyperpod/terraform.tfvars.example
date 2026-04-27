@@ -1,0 +1,88 @@
+# -----------------------------------------------------------------------------
+# General
+# -----------------------------------------------------------------------------
+region                = "us-west-2"
+hyperpod_cluster_name = "weka-hyperpod"
+
+# -----------------------------------------------------------------------------
+# EKS
+# -----------------------------------------------------------------------------
+# Get from: cd ../eks && terraform output cluster_arn
+eks_cluster_arn = "arn:aws:eks:us-west-2:123456789012:cluster/weka-hyperpod-eks"
+
+# -----------------------------------------------------------------------------
+# Network
+# -----------------------------------------------------------------------------
+# Single AZ matching the WEKA backend for intra-cluster performance
+subnet_ids = ["subnet-xxxxxxxxx"]
+
+# Security groups attached to HyperPod nodes. Typically the same SG you
+# attach to your EKS nodes and WEKA backend so cluster-wide traffic works
+# via shared-SG self-rules.
+# Get from: cd ../eks && terraform output cluster_security_group_id
+additional_security_group_ids = ["sg-xxxxxxxxx"]
+
+# Optional: disable the auto-created EFA-compliant SG. Default true. Only
+# disable if you're providing an EFA-compliant SG yourself in the list above.
+# create_efa_security_group = true
+
+# -----------------------------------------------------------------------------
+# S3 Lifecycle Scripts
+# -----------------------------------------------------------------------------
+# Bucket for lifecycle scripts. Set create_s3_bucket = false to reuse existing.
+s3_bucket_name = "my-hyperpod-lifecycle-bucket"
+# create_s3_bucket = true                   # default
+# s3_key_prefix    = "hyperpod-lifecycle"   # default
+
+# -----------------------------------------------------------------------------
+# IAM (optional: use existing execution role instead of creating one)
+# -----------------------------------------------------------------------------
+# create_sagemaker_execution_role = false
+# sagemaker_execution_role_arn    = "arn:aws:iam::123456789012:role/my-sagemaker-role"
+
+# -----------------------------------------------------------------------------
+# Instance Groups
+# -----------------------------------------------------------------------------
+instance_groups = [{
+  name                  = "weka-clients"
+  instance_type         = "ml.c5.12xlarge"
+  instance_count        = 2
+  ebs_volume_size_in_gb = 100
+  threads_per_core      = 2
+  labels = {
+    "weka.io/supports-clients" = "true"
+  }
+  taints = [{
+    key    = "weka.io/client"
+    value  = "true"
+    effect = "NoSchedule"
+  }]
+
+  # Optional advanced fields (omit to leave unset):
+  #   training_plan_arn           = "arn:aws:sagemaker:us-west-2:123456789012:training-plan/my-plan"
+  #   image_id                    = "ami-0abcdef1234567890"
+  #   on_start_deep_health_checks = ["InstanceStress", "InstanceConnectivity"]
+  #   min_instance_count          = 1
+}]
+
+# -----------------------------------------------------------------------------
+# WEKA Configuration (applies to all instance groups)
+# -----------------------------------------------------------------------------
+# Test-profile defaults: single-ENI instance, UDP-mode client.
+# On ml.p5.* / ml.p6.* raise weka_nic_count to match your planned
+# WekaClient.spec.coresNum, and bump hugepages accordingly.
+weka_hugepages_count = 2048
+weka_nic_count       = 0
+
+# -----------------------------------------------------------------------------
+# Cluster Settings
+# -----------------------------------------------------------------------------
+# auto_node_recovery = true  # default
+
+# -----------------------------------------------------------------------------
+# Tags
+# -----------------------------------------------------------------------------
+tags = {
+  Environment = "dev"
+  Project     = "weka-on-eks"
+}

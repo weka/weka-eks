@@ -1,0 +1,25 @@
+apiVersion: weka.weka.io/v1alpha1
+kind: WekaClient
+metadata:
+  name: weka-client
+  namespace: weka-operator-system
+spec:
+  coresNum: 2
+  driversDistService: "https://drivers.weka.io"
+  hugepages: 3072
+  image: quay.io/weka.io/weka-in-container:4.4.21.2
+  imagePullSecret: weka-quay-io-secret
+  joinIpPorts:
+    - "10.0.x.x:14000"
+    - "10.0.x.x:14000"
+  network:
+    udpMode: true
+  nodeSelector:
+    weka.io/supports-clients: "true"
+  portRange:
+    basePort: 46000
+  rawTolerations:
+    - key: "weka.io/client"
+      operator: "Equal"
+      value: "true"
+      effect: "NoSchedule"
