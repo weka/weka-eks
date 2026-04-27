@@ -1,7 +1,7 @@
 apiVersion: weka.weka.io/v1alpha1
 kind: WekaCluster
 metadata:
-  name: weka-axon-eks-cluster
+  name: weka-axon
   namespace: weka-operator-system
 spec:
   template: dynamic

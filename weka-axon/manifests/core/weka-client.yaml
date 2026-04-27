@@ -24,7 +24,7 @@ spec:
       value: "true"
       effect: "NoSchedule"
   targetCluster:
-    name: weka-axon-eks-cluster
+    name: weka-axon
     namespace: weka-operator-system
   upgradePolicy:
     type: all-at-once

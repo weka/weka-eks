@@ -170,18 +170,18 @@ ip-10-0-8-156.us-west-2.compute.internal    Ready    <none>   3h14m   v1.33.8-ek
 
 ---
 
-## Automated Kubernetes Setup
+## Automated Setup
 
 Once the Terraform module is applied, `deploy.sh` handles everything
 else: operator install, ensure-nics, sign-drives, WekaCluster,
 WekaClient, CSI plugin, StorageClass, and a test pod.
 
 If you'd rather walk through each step by hand, skip to
-[Manual Kubernetes Setup](#manual-kubernetes-setup).
+[Manual Setup](#manual-setup).
 
 ```bash
 ./deploy.sh \
-  --cluster-name my-eks-cluster \
+  --cluster-name weka-axon-eks \
   --quay-username myuser \
   --quay-password mypass
 ```
@@ -206,7 +206,7 @@ See [Cleanup](#cleanup) for teardown instructions.
 
 ---
 
-## Manual Kubernetes Setup
+## Manual Setup
 
 All commands assume you are in the `weka-axon/` directory.
 
@@ -559,7 +559,7 @@ Example for `i3en.12xlarge`:
 apiVersion: weka.weka.io/v1alpha1
 kind: WekaCluster
 metadata:
-  name: weka-axon-eks-cluster
+  name: weka-axon
   namespace: weka-operator-system
 spec:
   template: dynamic
@@ -599,13 +599,13 @@ Verify the WEKA cluster is created:
 kubectl get wekacluster -n weka-operator-system -w
 
 NAME                    STATUS          CLUSTER ID                             CCT(A/C/D)   DCT(A/C/D)   DRVS(A/C/D)
-weka-axon-eks-cluster   Init
-weka-axon-eks-cluster   Init                                                   0/6/6        0/6/6        0/0/24
-weka-axon-eks-cluster   Init            679d466a-1382-4562-8c08-c74de34a4362   0/6/6        0/6/6        0/0/24
-weka-axon-eks-cluster   WaitForDrives   679d466a-1382-4562-8c08-c74de34a4362   0/6/6        0/6/6        0/0/24
-weka-axon-eks-cluster   StartingIO      679d466a-1382-4562-8c08-c74de34a4362   0/6/6        0/6/6        0/0/24
-weka-axon-eks-cluster   Ready           679d466a-1382-4562-8c08-c74de34a4362   0/6/6        0/6/6        0/0/24
-weka-axon-eks-cluster   Ready           679d466a-1382-4562-8c08-c74de34a4362   6/6/6        6/6/6        24/24/24
+weka-axon   Init
+weka-axon   Init                                                   0/6/6        0/6/6        0/0/24
+weka-axon   Init            679d466a-1382-4562-8c08-c74de34a4362   0/6/6        0/6/6        0/0/24
+weka-axon   WaitForDrives   679d466a-1382-4562-8c08-c74de34a4362   0/6/6        0/6/6        0/0/24
+weka-axon   StartingIO      679d466a-1382-4562-8c08-c74de34a4362   0/6/6        0/6/6        0/0/24
+weka-axon   Ready           679d466a-1382-4562-8c08-c74de34a4362   0/6/6        0/6/6        0/0/24
+weka-axon   Ready           679d466a-1382-4562-8c08-c74de34a4362   6/6/6        6/6/6        24/24/24
 ```
 
 The `A/C/D` columns are Active / Created / Desired counts for
@@ -616,20 +616,20 @@ The `A/C/D` columns are Active / Created / Desired counts for
 And you can check that the compute and drive pods are running:
 
 ```bash
-kubectl get pods -n weka-operator-system | grep -E 'weka-axon-eks-cluster-(compute|drive)'
+kubectl get pods -n weka-operator-system | grep -E 'weka-axon-(compute|drive)'
 
-weka-axon-eks-cluster-compute-044c57f8-c6b5-4349-aefe-2c4f3e7b0e22   1/1     Running   0          3m48s
-weka-axon-eks-cluster-compute-2c98e65c-25c4-4790-b0c4-930c1e440148   1/1     Running   0          3m47s
-weka-axon-eks-cluster-compute-2d01aef5-e0a2-47e1-993b-7186ad15b389   1/1     Running   0          3m47s
-weka-axon-eks-cluster-compute-2fb097e6-e1f0-4f97-9204-33d9756e896a   1/1     Running   0          3m48s
-weka-axon-eks-cluster-compute-3817114f-0d60-4af2-8c35-998c2a3330a4   1/1     Running   0          3m47s
-weka-axon-eks-cluster-compute-898fae0b-2ddb-4958-b378-2f75906d5c8a   1/1     Running   0          3m48s
-weka-axon-eks-cluster-drive-04739f74-8f4a-4a09-94ee-89e52fec4052     1/1     Running   0          3m48s
-weka-axon-eks-cluster-drive-11941029-0c8d-43be-9c5c-e2adfa0c481f     1/1     Running   0          3m48s
-weka-axon-eks-cluster-drive-977c355a-65a2-4d33-a0f6-0cbda724f394     1/1     Running   0          3m48s
-weka-axon-eks-cluster-drive-9e8a6ecc-54a2-4e6b-93cf-7baae64731e2     1/1     Running   0          3m48s
-weka-axon-eks-cluster-drive-bef1d7eb-1af4-4057-8e25-d94363790f99     1/1     Running   0          3m48s
-weka-axon-eks-cluster-drive-da653d8e-c4d5-4a6b-9628-39d18aed4102     1/1     Running   0          3m48s
+weka-axon-compute-044c57f8-c6b5-4349-aefe-2c4f3e7b0e22   1/1     Running   0          3m48s
+weka-axon-compute-2c98e65c-25c4-4790-b0c4-930c1e440148   1/1     Running   0          3m47s
+weka-axon-compute-2d01aef5-e0a2-47e1-993b-7186ad15b389   1/1     Running   0          3m47s
+weka-axon-compute-2fb097e6-e1f0-4f97-9204-33d9756e896a   1/1     Running   0          3m48s
+weka-axon-compute-3817114f-0d60-4af2-8c35-998c2a3330a4   1/1     Running   0          3m47s
+weka-axon-compute-898fae0b-2ddb-4958-b378-2f75906d5c8a   1/1     Running   0          3m48s
+weka-axon-drive-04739f74-8f4a-4a09-94ee-89e52fec4052     1/1     Running   0          3m48s
+weka-axon-drive-11941029-0c8d-43be-9c5c-e2adfa0c481f     1/1     Running   0          3m48s
+weka-axon-drive-977c355a-65a2-4d33-a0f6-0cbda724f394     1/1     Running   0          3m48s
+weka-axon-drive-9e8a6ecc-54a2-4e6b-93cf-7baae64731e2     1/1     Running   0          3m48s
+weka-axon-drive-bef1d7eb-1af4-4057-8e25-d94363790f99     1/1     Running   0          3m48s
+weka-axon-drive-da653d8e-c4d5-4a6b-9628-39d18aed4102     1/1     Running   0          3m48s
 ```
 
 ### 4. Deploy WEKA Client
@@ -665,7 +665,7 @@ spec:
       value: "true"
       effect: "NoSchedule"
   targetCluster:
-    name: weka-axon-eks-cluster
+    name: weka-axon
     namespace: weka-operator-system
   upgradePolicy:
     type: all-at-once
@@ -690,7 +690,7 @@ Verify the client has deployed:
 kubectl get wekaclient -n weka-operator-system
 
 NAME                   STATUS    TARGET CLUSTER          CORES   CONTAINERS(A/C/D)
-weka-axon-eks-client   Running   weka-axon-eks-cluster   1       6/6/6
+weka-axon-eks-client   Running   weka-axon   1       6/6/6
 ```
 
 `CONTAINERS(A/C/D)` shows Active/Created/Desired. All should
@@ -732,13 +732,13 @@ Find the service:
 ```bash
 kubectl get svc -n weka-operator-system | grep proxy
 
-weka-axon-eks-cluster-management-proxy             ClusterIP   172.20.218.96   <none>        15305/TCP
+weka-axon-management-proxy             ClusterIP   172.20.218.96   <none>        15305/TCP
 ```
 
 You can now set up a port-forward:
 
 ```bash
-kubectl port-forward -n weka-operator-system svc/weka-axon-eks-cluster-management-proxy 15305:15305
+kubectl port-forward -n weka-operator-system svc/weka-axon-management-proxy 15305:15305
 ```
 
 Access locally in a web browser at:
@@ -750,10 +750,10 @@ http://localhost:15305
 Retrieve the admin credentials (created by the operator):
 
 ```bash
-kubectl get secret -n weka-operator-system weka-cluster-weka-axon-eks-cluster \
+kubectl get secret -n weka-operator-system weka-cluster-weka-axon \
   -o jsonpath='{.data.username}' | base64 -d; echo
 
-kubectl get secret -n weka-operator-system weka-cluster-weka-axon-eks-cluster \
+kubectl get secret -n weka-operator-system weka-cluster-weka-axon \
   -o jsonpath='{.data.password}' | base64 -d; echo
 ```
 
@@ -772,8 +772,8 @@ automatically. Verify the CSI pods are running:
 ```bash
 kubectl get pods -n weka-operator-system | grep csi
 
-csi-wekafs-controller-7f9b6d8c54-rvcmg   6/6     Running   2   4m
-csi-wekafs-controller-7f9b6d8c54-zmk6b   6/6     Running   3   4m
+csi-wekafs-controller-7f9b6d8c54-rvcmg   5/5     Running   2   4m
+csi-wekafs-controller-7f9b6d8c54-zmk6b   5/5     Running   3   4m
 csi-wekafs-node-654t7                    3/3     Running   2   4m
 csi-wekafs-node-nfnh4                    3/3     Running   3   4m
 csi-wekafs-node-8mv4p                    3/3     Running   2   4m
@@ -791,20 +791,20 @@ Check the API secret and default StorageClasses:
 ```bash
 kubectl get secrets -n weka-operator-system | grep csi
 
-weka-csi-weka-axon-eks-cluster   Opaque   5   39m
+weka-csi-weka-axon   Opaque   5   39m
 ```
 
 ```bash
 kubectl get storageclass | grep weka
 
-weka-weka-axon-eks-cluster-weka-operator-system-default               ...   Delete   Immediate   true   ...
-weka-weka-axon-eks-cluster-weka-operator-system-default-forcedirect   ...   Delete   Immediate   true   ...
+weka-weka-axon-weka-operator-system-default               ...   Delete   Immediate   true   ...
+weka-weka-axon-weka-operator-system-default-forcedirect   ...   Delete   Immediate   true   ...
 ```
 
 The API secret values are base64-encoded. To decode and inspect:
 
 ```bash
-kubectl get secret -n weka-operator-system weka-csi-weka-axon-eks-cluster \
+kubectl get secret -n weka-operator-system weka-csi-weka-axon \
   -o json | jq -r '.data | to_entries[] | "\(.key): \(.value | @base64d)"'
 ```
 
@@ -822,7 +822,7 @@ apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
   name: storageclass-wekafs-dir-api
-provisioner: weka-axon-eks-cluster.weka-operator-system.weka.io
+provisioner: weka-axon.weka-operator-system.weka.io
 allowVolumeExpansion: true
 reclaimPolicy: Delete
 volumeBindingMode: WaitForFirstConsumer
@@ -830,7 +830,7 @@ parameters:
   volumeType: dir/v1
   filesystemName: default
   capacityEnforcement: HARD
-  csi.storage.k8s.io/provisioner-secret-name: &secretName weka-csi-weka-axon-eks-cluster
+  csi.storage.k8s.io/provisioner-secret-name: &secretName weka-csi-weka-axon
   csi.storage.k8s.io/provisioner-secret-namespace: &secretNamespace weka-operator-system
   csi.storage.k8s.io/controller-publish-secret-name: *secretName
   csi.storage.k8s.io/controller-publish-secret-namespace: *secretNamespace
@@ -846,7 +846,7 @@ Key parameters:
 
 | Parameter             | Options                                        | Description                                                                                                |
 |-----------------------|------------------------------------------------|------------------------------------------------------------------------------------------------------------|
-| `volumeBindingMode`   | `WaitForFirstConsumer` (default), `Immediate`  | `WaitForFirstConsumer` delays provisioning until a pod uses the PVC - better for topology-aware scheduling |
+| `volumeBindingMode`   | `WaitForFirstConsumer` (default), `Immediate`  | Delays provisioning until a pod uses the PVC, improving topology-aware scheduling                          |
 | `reclaimPolicy`       | `Delete` (default), `Retain`                   | `Delete` removes the volume when PVC is deleted; `Retain` keeps it                                         |
 | `filesystemName`      | `default`                                      | WEKA filesystem to use for volumes                                                                         |
 | `capacityEnforcement` | `HARD`, `SOFT`                                 | `HARD` enforces quota limits strictly                                                                      |
@@ -865,9 +865,9 @@ Verify:
 ```bash
 kubectl get storageclass | grep weka
 
-storageclass-wekafs-dir-api                                           weka-axon-eks-cluster.weka-operator-system.weka.io   Delete   WaitForFirstConsumer   true   105s
-weka-weka-axon-eks-cluster-weka-operator-system-default               weka-axon-eks-cluster.weka-operator-system.weka.io   Delete   Immediate              true   14h
-weka-weka-axon-eks-cluster-weka-operator-system-default-forcedirect   weka-axon-eks-cluster.weka-operator-system.weka.io   Delete   Immediate              true   14h
+storageclass-wekafs-dir-api                                           weka-axon.weka-operator-system.weka.io   Delete   WaitForFirstConsumer   true   105s
+weka-weka-axon-weka-operator-system-default               weka-axon.weka-operator-system.weka.io   Delete   Immediate              true   14h
+weka-weka-axon-weka-operator-system-default-forcedirect   weka-axon.weka-operator-system.weka.io   Delete   Immediate              true   14h
 ```
 
 ### 7. Test Dynamic Provisioning
@@ -879,7 +879,7 @@ Deploy a test PVC and pods to verify the WEKA CSI integration.
 First create a namespace for our test application:
 
 ```bash
-kubectl create namespace weka-axon-test
+kubectl create namespace weka-test
 ```
 
 A sample PVC is provided:
@@ -889,7 +889,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: pvc-wekafs-dir
-  namespace: weka-axon-test
+  namespace: weka-test
 spec:
   accessModes:
     - ReadWriteMany
@@ -901,7 +901,7 @@ spec:
 ```
 
 This creates a 10 GiB `ReadWriteMany` PVC in the
-`weka-axon-test` namespace.
+`weka-test` namespace.
 
 Apply:
 
@@ -912,13 +912,13 @@ kubectl apply -f manifests/test/pvc.yaml
 And check that it was created:
 
 ```bash
-kubectl get pvc -n weka-axon-test
+kubectl get pvc -n weka-test
 
 NAME             STATUS    VOLUME   CAPACITY   ACCESS MODES   STORAGECLASS                  VOLUMEATTRIBUTESCLASS   AGE
 pvc-wekafs-dir   Pending                                      storageclass-wekafs-dir-api   <unset>                 19s
 ```
 
-Status is **PENDING** because of `WaitForFirstConsumer`. It will
+Status is `Pending` because of `WaitForFirstConsumer`. It will
 bind once a pod references the PVC.
 
 #### 7.2 Deploy Writer Pod
@@ -929,8 +929,8 @@ Deploy a pod that mounts the PVC and writes test data:
 apiVersion: v1
 kind: Pod
 metadata:
-  name: weka-axon-writer
-  namespace: weka-axon-test
+  name: weka-writer
+  namespace: weka-test
 spec:
   nodeSelector:
     weka.io/supports-clients: "true"
@@ -969,13 +969,13 @@ spec:
 Deploy the application pod:
 
 ```bash
-kubectl apply -f manifests/test/weka-axon-writer.yaml
+kubectl apply -f manifests/test/weka-writer.yaml
 ```
 
 You can check that the application ran:
 
 ```bash
-kubectl logs -n weka-axon-test weka-axon-writer
+kubectl logs -n weka-test weka-writer
 
 total 4
 d---------    1 root     root             0 Feb  5 13:34 .
@@ -987,7 +987,7 @@ Hello from WEKA!
 You can also now see that the PVC has been bound:
 
 ```bash
-kubectl get pvc -n weka-axon-test
+kubectl get pvc -n weka-test
 
 NAME             STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS                  VOLUMEATTRIBUTESCLASS   AGE
 pvc-wekafs-dir   Bound    pvc-7fc58fbf-5156-4f6f-9b4a-4d7775f8a73e   10Gi       RWX            storageclass-wekafs-dir-api   <unset>                 9m36s
@@ -1002,8 +1002,8 @@ same PVC from a different node:
 apiVersion: v1
 kind: Pod
 metadata:
-  name: weka-axon-reader
-  namespace: weka-axon-test
+  name: weka-reader
+  namespace: weka-test
 spec:
   nodeSelector:
     weka.io/supports-clients: "true"
@@ -1042,23 +1042,23 @@ spec:
 Deploy the pod:
 
 ```bash
-kubectl apply -f manifests/test/weka-axon-reader.yaml
+kubectl apply -f manifests/test/weka-reader.yaml
 ```
 
 Verify both application pods are running:
 
 ```bash
-kubectl get pods -n weka-axon-test -o wide
+kubectl get pods -n weka-test -o wide
 
 NAME               READY   STATUS    RESTARTS   AGE   IP           NODE                                       NOMINATED NODE   READINESS GATES
-weka-axon-writer   1/1     Running   0          12m   10.0.8.218   ip-10-0-8-40.us-west-2.compute.internal    <none>           <none>
-weka-axon-reader   1/1     Running   0          14s   10.0.10.140  ip-10-0-10-240.us-west-2.compute.internal  <none>           <none>
+weka-writer   1/1     Running   0          12m   10.0.8.218   ip-10-0-8-40.us-west-2.compute.internal    <none>           <none>
+weka-reader   1/1     Running   0          14s   10.0.10.140  ip-10-0-10-240.us-west-2.compute.internal  <none>           <none>
 ```
 
 Examine the logs from the reader pod:
 
 ```bash
-kubectl logs -n weka-axon-test weka-axon-reader
+kubectl logs -n weka-test weka-reader
 
 + echo 'Reading data written by another pod:'
 Reading data written by another pod:
@@ -1074,14 +1074,14 @@ Hello from WEKA!
 Quick option (matches `deploy.sh`):
 
 ```bash
-./deploy.sh --cleanup --cluster-name my-eks-cluster
+./deploy.sh --cleanup --cluster-name weka-axon-eks
 ```
 
 Or manually:
 
 ```bash
 # Delete test namespace
-kubectl delete namespace weka-axon-test
+kubectl delete namespace weka-test
 
 # Delete custom StorageClass
 kubectl delete storageclass storageclass-wekafs-dir-api

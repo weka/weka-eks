@@ -2,7 +2,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: pvc-wekafs-dir
-  namespace: weka-axon-test
+  namespace: weka-test
 spec:
   accessModes:
     - ReadWriteMany

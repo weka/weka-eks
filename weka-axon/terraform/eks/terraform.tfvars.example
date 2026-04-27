@@ -53,5 +53,5 @@ node_groups = {
 
 tags = {
   Environment = "dev"
-  Project     = "weka-eks"
+  Project     = "weka-on-eks"
 }

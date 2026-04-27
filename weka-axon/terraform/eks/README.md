@@ -43,7 +43,7 @@ for the full variable and output reference.
 
 **For WEKA axon nodes, set:**
 
-- `imds_hop_limit_2 = true` (required for ENI management)
+- `imds_hop_limit_2 = true` (required for WEKA pod access to IMDS)
 - `enable_cpu_manager_static = true` (DPDK CPU allocation)
 - `disable_hyperthreading = true` with matching `core_count`
 - `hugepages_count` (covers backend + client containers per node)
@@ -64,6 +64,18 @@ same nodes:
    and client containers. Labeled with
    `weka.io/supports-backends` and `weka.io/supports-clients` and
    tainted with `weka.io/axon=true:NoSchedule`.
+
+## Post-Deployment
+
+After `terraform apply`:
+
+1. Install the WEKA Operator via Helm (with CSI bundled)
+2. Apply ensure-nics + sign-drives WekaPolicies
+3. Apply WekaCluster manifest
+4. Apply WekaClient manifest
+5. Verify hugepages (allocated at boot via launch template)
+
+See the [main README](../../README.md) for step-by-step instructions.
 
 ## Requirements
 
