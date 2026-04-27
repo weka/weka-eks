@@ -54,7 +54,7 @@ variable "get_weka_io_token" {
 }
 
 # -----------------------------------------------------------------------------
-# Network
+# Networking
 # -----------------------------------------------------------------------------
 variable "subnet_ids" {
   description = "List of subnet IDs for WEKA backend instances"
