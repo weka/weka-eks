@@ -1,5 +1,5 @@
 # -----------------------------------------------------------------------------
-# Required
+# General
 # -----------------------------------------------------------------------------
 variable "region" {
   description = "AWS region"
@@ -17,7 +17,7 @@ variable "subnet_ids" {
 }
 
 # -----------------------------------------------------------------------------
-# Cluster settings
+# Cluster Settings
 # -----------------------------------------------------------------------------
 variable "kubernetes_version" {
   description = "Kubernetes version for EKS cluster"
@@ -44,7 +44,7 @@ variable "public_access_cidrs" {
 }
 
 variable "additional_security_group_ids" {
-  description = "Additional security group IDs (e.g., WEKA backend SG). Attached to node launch templates when present, otherwise to the EKS cluster."
+  description = "Additional security group IDs (e.g., WEKA backend SG). Attached to the EKS cluster vpc_config and (when launch templates are created) to node launch templates."
   type        = list(string)
   default     = []
 }
@@ -62,7 +62,7 @@ variable "enabled_cluster_log_types" {
 }
 
 # -----------------------------------------------------------------------------
-# Node groups
+# Node Groups
 # -----------------------------------------------------------------------------
 variable "node_groups" {
   description = <<-EOT
@@ -74,15 +74,15 @@ variable "node_groups" {
   EOT
 
   type = map(object({
-    instance_types            = list(string)
-    desired_size              = number
-    min_size                  = number
-    max_size                  = number
-    subnet_ids                = optional(list(string), null)
-    disk_size                 = optional(number, 100)
-    ami_type                  = optional(string, "AL2023_x86_64_STANDARD")
-    capacity_type             = optional(string, "ON_DEMAND")
-    labels                    = optional(map(string), {})
+    instance_types = list(string)
+    desired_size   = number
+    min_size       = number
+    max_size       = number
+    subnet_ids     = optional(list(string), null)
+    disk_size      = optional(number, 100)
+    ami_type       = optional(string, "AL2023_x86_64_STANDARD")
+    capacity_type  = optional(string, "ON_DEMAND")
+    labels         = optional(map(string), {})
     taints = optional(list(object({
       key    = string
       value  = string
@@ -133,7 +133,7 @@ variable "cluster_dns_ip" {
 }
 
 # -----------------------------------------------------------------------------
-# Cluster autoscaler
+# Cluster Autoscaler
 # -----------------------------------------------------------------------------
 variable "enable_cluster_autoscaler" {
   description = "Add cluster autoscaler discovery labels to node groups"

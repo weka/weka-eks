@@ -1,3 +1,27 @@
+%{~ if false ~}
+nodeadm-userdata.yaml.tftpl
+
+Cloud-init MIME-multipart user data for EKS managed node groups.
+Rendered by templatefile() in modules/eks/main.tf and embedded in
+the launch template. AL2023's nodeadm parses MIME-multipart format
+and runs the shell + NodeConfig sections at boot before kubelet
+starts.
+
+Sections are conditional — only emitted when at least one of
+{hugepages_count > 0, enable_cpu_manager_static,
+cluster_dns_ip != null} is true. The templatefile() call itself
+is gated by the same condition (see modules/eks/main.tf).
+
+Interpolated variables: hugepages_count (number),
+enable_cpu_manager_static (bool), cpu_manager_reconcile_period
+(string), cluster_dns_ip (string|null).
+
+The hugepages logic here is intentionally duplicated by
+hyperpod-dedicated/lifecycle-scripts/configure-weka-hugepages.sh,
+which runs on HyperPod-managed nodes (different bootstrap path —
+HyperPod doesn't accept custom launch-template user data). Keep
+the two in sync if either changes.
+%{~ endif ~}
 MIME-Version: 1.0
 Content-Type: multipart/mixed; boundary="==MYBOUNDARY=="
 

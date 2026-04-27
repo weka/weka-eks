@@ -21,10 +21,10 @@ locals {
   node_groups_use_lt = {
     for k, v in var.node_groups : k => v
     if try(v.imds_hop_limit_2, false) ||
-       try(v.enable_cpu_manager_static, false) ||
-       try(v.disable_hyperthreading, false) ||
-       try(v.hugepages_count, 0) > 0 ||
-       length(var.additional_security_group_ids) > 0
+    try(v.enable_cpu_manager_static, false) ||
+    try(v.disable_hyperthreading, false) ||
+    try(v.hugepages_count, 0) > 0 ||
+    length(var.additional_security_group_ids) > 0
   }
 }
 
@@ -144,7 +144,7 @@ resource "aws_launch_template" "nodes" {
   for_each    = local.node_groups_use_lt
   name_prefix = "${var.cluster_name}-${each.key}-"
 
-  # IMDS hop limit 2 required for WEKA operator ENI management from pods
+  # IMDS hop limit 2 required when pods need IMDS metadata (e.g., WEKA components reading instance metadata)
   dynamic "metadata_options" {
     for_each = try(each.value.imds_hop_limit_2, false) ? [1] : []
     content {
@@ -203,6 +203,12 @@ resource "aws_launch_template" "nodes" {
   }
 
   tags = var.tags
+
+  # Stand up the new LT before tearing down the old one so the referencing
+  # node group never points at a destroyed resource.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # -----------------------------------------------------------------------------

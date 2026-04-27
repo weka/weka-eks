@@ -1,7 +1,7 @@
 # Shared EKS Module
 
-Deploys an EKS cluster with configurable node groups, optional launch
-templates. Used by all deployment models.
+Deploys an EKS cluster with configurable node groups and optional
+launch templates. Used by all deployment models.
 
 ## Usage
 
@@ -148,7 +148,7 @@ Worker nodes are added by SageMaker HyperPod, not this module.
 | `public_access_cidrs` | list(string) | `["0.0.0.0/0"]` | CIDRs for public API access |
 | `additional_security_group_ids` | list(string) | `[]` | Additional SGs (e.g., WEKA backend SG) |
 | `authentication_mode` | string | `"API"` | EKS auth mode |
-| `enabled_cluster_log_types` | list(string) | `["api", "audit", ...]` | Control plane log types |
+| `enabled_cluster_log_types` | list(string) | `["api", "audit", "authenticator", "controllerManager", "scheduler"]` | Control plane log types |
 | `admin_role_arn` | string | `null` | IAM role for cluster admin access |
 | `tags` | map(string) | `{}` | Tags for all resources |
 
@@ -174,7 +174,7 @@ node group with an optional launch template (auto-created when needed).
 | `disk_size` | number | `100` | Root volume (GiB) |
 | `ami_type` | string | `"AL2023_x86_64_STANDARD"` | EKS AMI type |
 | `capacity_type` | string | `"ON_DEMAND"` | `ON_DEMAND` or `SPOT` |
-| `imds_hop_limit_2` | bool | `false` | IMDS hop limit 2 (required for ensure-nics) |
+| `imds_hop_limit_2` | bool | `false` | Set IMDS hop limit to 2 (required when pods need access to IMDS metadata, e.g. WEKA components that read instance metadata) |
 | `enable_cpu_manager_static` | bool | `false` | Kubelet static CPU manager for DPDK |
 | `disable_hyperthreading` | bool | `false` | Disable HT (requires `core_count`) |
 | `core_count` | number | `null` | Physical cores (required if HT disabled) |
@@ -190,7 +190,7 @@ sets `imds_hop_limit_2`, `enable_cpu_manager_static`,
 **For WEKA client nodes (dedicated mode):**
 
 - `subnet_ids` to the WEKA backend subnet (same AZ / placement group)
-- `imds_hop_limit_2 = true` (required for ENI management)
+- `imds_hop_limit_2 = true` (required for WEKA pod access to IMDS)
 - `enable_cpu_manager_static = true` (DPDK CPU allocation)
 - `hugepages_count` (~768 pages per WEKA core)
 - Label `weka.io/supports-clients = "true"`
