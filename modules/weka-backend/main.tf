@@ -28,9 +28,9 @@ module "weka_deployment" {
   get_weka_io_token = var.get_weka_io_token
 
   # Network
-  subnet_ids               = var.subnet_ids
-  sg_ids                   = var.sg_ids
-  create_nat_gateway       = var.create_nat_gateway
+  subnet_ids         = var.subnet_ids
+  sg_ids             = var.sg_ids
+  create_nat_gateway = var.create_nat_gateway
 
   # ALB
   create_alb               = var.create_alb
