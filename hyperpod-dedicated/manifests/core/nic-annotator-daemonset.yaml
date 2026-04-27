@@ -1,0 +1,94 @@
+# Reads NIC JSON written by the HyperPod lifecycle script and annotates each
+# node with weka.io/weka-nics + patches weka.io/nics capacity for the operator.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: weka-nic-annotator
+  namespace: weka-operator-system
+spec:
+  selector:
+    matchLabels:
+      app: weka-nic-annotator
+  template:
+    metadata:
+      labels:
+        app: weka-nic-annotator
+    spec:
+      serviceAccountName: weka-nic-annotator
+      # Select HyperPod nodes (this label is added automatically by SageMaker)
+      nodeSelector:
+        sagemaker.amazonaws.com/compute-type: hyperpod
+      # Tolerate everything: this DaemonSet must run on every HyperPod node
+      # regardless of taints (the WEKA client taint, GPU taints from the
+      # NVIDIA device plugin, etc.).
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: annotator
+          # Alpine-based image with kubectl + busybox shell (the script
+          # below needs /bin/sh). Pin to your EKS kubernetes_version;
+          # alpine/k8s publishes X.Y.Z tags per kubectl patch release.
+          image: alpine/k8s:1.33.4
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: JSON_FILE
+              value: /host/weka/hyperpod-nics.json
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -euo pipefail
+
+              echo "Node: ${NODE_NAME}"
+              echo "Waiting for NIC JSON at ${JSON_FILE}..."
+
+              while true; do
+                if [ ! -s "${JSON_FILE}" ]; then
+                  sleep 5
+                  continue
+                fi
+
+                NIC_JSON="$(cat "${JSON_FILE}")"
+
+                # Top-level array length (the file must be []domain.NIC for
+                # the WEKA operator's unmarshal to succeed; see
+                # configure-hyperpod-nics.py).
+                NIC_COUNT=$(echo "$NIC_JSON" | jq 'length')
+                if [ -z "$NIC_COUNT" ] || [ "$NIC_COUNT" -eq 0 ]; then
+                  echo "WARNING: NIC JSON has no entries, retrying..."
+                  sleep 10
+                  continue
+                fi
+
+                echo "Annotating ${NODE_NAME} with ${NIC_COUNT} NIC(s)..."
+
+                # Annotation for WEKA operator NIC discovery
+                kubectl annotate node "${NODE_NAME}" \
+                  "weka.io/weka-nics=${NIC_JSON}" \
+                  "weka.io/nics-ready=true" \
+                  --overwrite >/dev/null
+
+                # Patch node capacity so scheduler knows about available NICs
+                kubectl patch node "${NODE_NAME}" \
+                  --subresource=status \
+                  --type=merge \
+                  -p "{\"status\":{\"capacity\":{\"weka.io/nics\":\"${NIC_COUNT}\"},\"allocatable\":{\"weka.io/nics\":\"${NIC_COUNT}\"}}}" \
+                  >/dev/null
+
+                # Re-assert annotations every 5 min in case kubectl edits drift.
+                sleep 300
+              done
+          volumeMounts:
+            - name: weka-host
+              mountPath: /host/weka
+              readOnly: true
+      volumes:
+        - name: weka-host
+          hostPath:
+            path: /var/lib/weka
+            type: DirectoryOrCreate

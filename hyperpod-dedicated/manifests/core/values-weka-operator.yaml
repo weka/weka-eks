@@ -1,0 +1,12 @@
+# Helm values for WEKA Operator
+# The controller-manager runs on system nodes (no special config needed).
+# The node-agent DaemonSet is restricted to client nodes via nodeSelector + tolerations.
+
+nodeAgent:
+  nodeSelector:
+    weka.io/supports-clients: "true"
+  tolerations:
+    - key: "weka.io/client"
+      operator: "Equal"
+      value: "true"
+      effect: "NoSchedule"
