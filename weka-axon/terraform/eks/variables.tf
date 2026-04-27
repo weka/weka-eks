@@ -1,5 +1,5 @@
 # -----------------------------------------------------------------------------
-# Required
+# General
 # -----------------------------------------------------------------------------
 variable "region" {
   description = "AWS region"
@@ -17,7 +17,7 @@ variable "subnet_ids" {
 }
 
 # -----------------------------------------------------------------------------
-# Cluster settings
+# Cluster Settings
 # -----------------------------------------------------------------------------
 variable "kubernetes_version" {
   description = "Kubernetes version for EKS cluster"
@@ -62,30 +62,30 @@ variable "enabled_cluster_log_types" {
 }
 
 # -----------------------------------------------------------------------------
-# Node groups
+# Node Groups
 # -----------------------------------------------------------------------------
 variable "node_groups" {
   description = "Map of node group configurations"
   type = map(object({
-    instance_types            = list(string)
-    desired_size              = number
-    min_size                  = number
-    max_size                  = number
-    subnet_ids                = optional(list(string), null)
-    disk_size                 = optional(number, 100)
-    ami_type                  = optional(string, "AL2023_x86_64_STANDARD")
-    capacity_type             = optional(string, "ON_DEMAND")
-    imds_hop_limit_2          = optional(bool, false)
-    enable_cpu_manager_static = optional(bool, false)
-    disable_hyperthreading    = optional(bool, false)
-    core_count                = optional(number, null)
-    hugepages_count           = optional(number, 0)
-    labels                    = optional(map(string), {})
+    instance_types = list(string)
+    desired_size   = number
+    min_size       = number
+    max_size       = number
+    subnet_ids     = optional(list(string), null)
+    disk_size      = optional(number, 100)
+    ami_type       = optional(string, "AL2023_x86_64_STANDARD")
+    capacity_type  = optional(string, "ON_DEMAND")
+    labels         = optional(map(string), {})
     taints = optional(list(object({
       key    = string
       value  = string
       effect = string
     })), [])
+    imds_hop_limit_2          = optional(bool, false)
+    enable_cpu_manager_static = optional(bool, false)
+    disable_hyperthreading    = optional(bool, false)
+    core_count                = optional(number, null)
+    hugepages_count           = optional(number, 0)
   }))
   default = {}
 

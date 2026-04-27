@@ -1,8 +1,8 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: weka-axon-writer
-  namespace: weka-axon-test
+  name: weka-reader
+  namespace: weka-test
 spec:
   nodeSelector:
     weka.io/supports-clients: "true"
@@ -12,7 +12,7 @@ spec:
       value: "true"
       effect: "NoSchedule"
   containers:
-    - name: writer
+    - name: reader
       image: busybox:1.37.0
       resources:
         requests:
@@ -25,8 +25,8 @@ spec:
         - sh
         - -c
         - |
-          echo 'Hello from WEKA!' > /data/hello.txt
-          ls -la /data
+          set -eux
+          echo "Reading data written by another pod:"
           cat /data/hello.txt
           sleep 3600
       volumeMounts:
