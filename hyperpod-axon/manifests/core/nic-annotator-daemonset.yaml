@@ -1,0 +1,87 @@
+# Reads NIC JSON written by the HyperPod lifecycle script and annotates the
+# node with weka.io/weka-nics + patches weka.io/nics capacity.  This replaces
+# the ensure-nics WekaPolicy used in standard EKS deployments.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: weka-nic-annotator
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      app: weka-nic-annotator
+  template:
+    metadata:
+      labels:
+        app: weka-nic-annotator
+    spec:
+      serviceAccountName: weka-nic-annotator
+      # Select HyperPod nodes (this label is added automatically by SageMaker)
+      nodeSelector:
+        sagemaker.amazonaws.com/compute-type: hyperpod
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: annotator
+          # Pin to your EKS kubernetes_version (1.33)
+          image: bitnami/kubectl:1.33
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: JSON_FILE
+              value: /host/weka/hyperpod-nics.json
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -euo pipefail
+
+              echo "Node: ${NODE_NAME}"
+              echo "Waiting for NIC JSON at ${JSON_FILE}..."
+
+              while true; do
+                if [ ! -s "${JSON_FILE}" ]; then
+                  sleep 5
+                  continue
+                fi
+
+                NIC_JSON="$(cat "${JSON_FILE}")"
+
+                # Extract NIC count from JSON array
+                NIC_COUNT=$(echo "$NIC_JSON" | grep -c '"ifname"' || echo "0")
+                if [ "$NIC_COUNT" -eq 0 ]; then
+                  echo "WARNING: NIC JSON has no entries, retrying..."
+                  sleep 10
+                  continue
+                fi
+
+                echo "Annotating ${NODE_NAME} with ${NIC_COUNT} NIC(s)..."
+
+                # Annotation for WEKA operator NIC discovery
+                kubectl annotate node "${NODE_NAME}" \
+                  "weka.io/weka-nics=${NIC_JSON}" \
+                  "weka.io/nics-ready=true" \
+                  --overwrite >/dev/null
+
+                # Patch node capacity so scheduler knows about available NICs
+                kubectl patch node "${NODE_NAME}" \
+                  --subresource=status \
+                  --type=merge \
+                  -p "{\"status\":{\"capacity\":{\"weka.io/nics\":\"${NIC_COUNT}\"},\"allocatable\":{\"weka.io/nics\":\"${NIC_COUNT}\"}}}" \
+                  >/dev/null
+
+                sleep 60
+              done
+          volumeMounts:
+            - name: weka-host
+              mountPath: /host/weka
+              readOnly: true
+      volumes:
+        - name: weka-host
+          hostPath:
+            path: /var/lib/weka
+            type: DirectoryOrCreate

@@ -1,0 +1,30 @@
+apiVersion: weka.weka.io/v1alpha1
+kind: WekaClient
+metadata:
+  name: weka-axon-hyperpod-client
+  namespace: weka-operator-system
+spec:
+  autoRemoveTimeout: "24h0m0s"
+  coresNum: 1
+  cpuPolicy: dedicated
+  cpuRequest: "500m"
+  driversDistService: https://drivers.weka.io
+  image: quay.io/weka.io/weka-in-container:4.4.21.2
+  imagePullSecret: "weka-quay-io-secret"
+  network: {}
+  nodeSelector:
+    weka.io/supports-clients: "true"
+  rawTolerations:
+    - key: "weka.io/axon"
+      operator: "Equal"
+      value: "true"
+      effect: "NoSchedule"
+  portRange:
+    basePort: 46000
+    portRange: 0
+  targetCluster:
+    name: weka-axon-hyperpod-cluster
+    namespace: weka-operator-system
+  upgradePolicy:
+    type: all-at-once
+  wekaHomeConfig: {}

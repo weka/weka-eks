@@ -1,0 +1,29 @@
+region                = "us-west-2"
+hyperpod_cluster_name = "weka-axon-hyperpod"
+
+# From terraform/eks/ outputs
+eks_cluster_arn = "arn:aws:eks:us-west-2:123456789012:cluster/weka-axon-hyperpod-eks"
+
+# Networking
+subnet_ids        = ["subnet-xxxxxxxxx", "subnet-yyyyyyyyy"]
+security_group_id = "sg-xxxxxxxxx"
+subnet_cidr       = "10.0.0.0/22"
+
+# Existing S3 bucket for lifecycle scripts
+s3_bucket_name = "sagemaker-hyperpod-lifecycle-123456789012"
+
+# Instance groups — adjust for your instance type and WEKA sizing
+instance_groups = [{
+  name                  = "weka-axon"
+  instance_type         = "ml.p5.48xlarge"
+  instance_count        = 6
+  ebs_volume_size_in_gb = 500
+  threads_per_core      = 1     # Disable HT for WEKA backends
+  weka_nic_count        = 7     # 1 per compute/drive core pair
+  weka_hugepages_count  = 5376  # See README for sizing formula
+}]
+
+tags = {
+  Environment = "dev"
+  Project     = "weka-axon-hyperpod"
+}

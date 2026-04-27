@@ -1,0 +1,16 @@
+# NOTE: sign-drives requires privileged access to local NVMe drives.
+# Verify this works on HyperPod instances before relying on it.
+apiVersion: weka.weka.io/v1alpha1
+kind: WekaPolicy
+metadata:
+  name: sign-drives-policy
+  namespace: weka-operator-system
+spec:
+  type: "sign-drives"
+  image: "quay.io/weka.io/weka-in-container:4.4.21.2"
+  imagePullSecret: "weka-quay-io-secret"
+  payload:
+    signDrivesPayload:
+      type: aws-all
+      nodeSelector:
+        weka.io/supports-backends: "true"
