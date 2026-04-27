@@ -47,7 +47,7 @@ for the full variable and output reference.
 **For WEKA client nodes, set:**
 
 - `subnet_ids` to the WEKA backend subnet (same AZ / placement group)
-- `imds_hop_limit_2 = true` (required for ENI management)
+- `imds_hop_limit_2 = true` (required for WEKA pod access to IMDS)
 - `enable_cpu_manager_static = true` (DPDK CPU allocation)
 - `hugepages_count` (~768 pages per WEKA core)
 - Label `weka.io/supports-clients = "true"`
